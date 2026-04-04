@@ -209,8 +209,8 @@ def engineer_features(close_df, vol_df, universe_mask=None,
             close_df, rank_mom, rank_trend, rank_vol, rank_stab, universe_mask
         )
     else:
-        # 等權加總（滿分 4.0）
-        total_score = rank_mom + rank_trend + rank_vol + rank_stab
+        # Method C: 動量主導 + 輕量趨勢確認 (交叉驗證最佳)
+        total_score = rank_mom * 3 + rank_trend * 1
 
     print("   ✅ 特徵計算完成")
     return total_score, ma_long, atr_df, short_ma
