@@ -83,7 +83,7 @@ def full_sweep():
 
 
 def quick_sweep():
-    """Quick parameter sweep: ~15 configs."""
+    """Quick parameter sweep: ~17 configs."""
     return [
         ('baseline', ''),
         ('hold=15', '--hold-days 15'),
@@ -97,9 +97,10 @@ def quick_sweep():
         ('tp=4.5', '--tp-atr 4.5'),
         ('sl=2.5', '--sl-atr 2.5'),
         ('sl=3.5', '--sl-atr 3.5'),
-        ('mean-rev', '--mean-reversion'),
         ('dyn-risk', '--dynamic-risk'),
-        ('fut-hedge', '--futures-hedge'),
+        ('gap=1.5+dyn', '--gap-filter 1.5 --dynamic-risk'),
+        ('slip=0.1%', '--slippage 0.001'),
+        ('slip=0.2%', '--slippage 0.002'),
     ]
 
 
@@ -150,14 +151,20 @@ def main():
         print(f"{r['name']:<24s} | {r['ann']:>+6.1f}% | {r['sharpe']:>6.3f} | {r['sortino']:>5.2f} | "
               f"{r['calmar']:>6.3f} | {r['mdd']:>6.1f}% | {r['trades']:>4d} | {r['win_rate']:>4.1f}% | {r['pf']:>4.2f}{marker}")
 
-    # Summary
+    # Summary + degradation alert
     print(sep)
     best = results[0]
-    if baseline_sharpe and best['sharpe'] > baseline_sharpe * 1.02:
+    exit_code = 0
+
+    if baseline_sharpe and baseline_sharpe < 1.5:
+        print(f"\n🚨 警報：Baseline Sharpe {baseline_sharpe:.3f} < 1.5！策略可能已劣化")
+        print(f"   建議立即手動檢查市場環境與參數適配性")
+        exit_code = 1
+    elif baseline_sharpe and best['sharpe'] > baseline_sharpe * 1.05:
         print(f"\n⚠️  發現更優配置: {best['name']} (Sharpe {best['sharpe']:.3f} vs baseline {baseline_sharpe:.3f})")
         print(f"   建議命令: python ai_report.py {best['args']}")
     else:
-        print(f"\n✅ 當前配置仍為最優或差異 < 2%")
+        print(f"\n✅ 當前配置仍為最優或差異 < 5%")
 
     # CSV output
     if args.output in ('log', 'csv'):
@@ -169,6 +176,9 @@ def main():
             writer.writerows(results)
         print(f"📄 結果已儲存至 {filename}")
 
+    sys.exit(exit_code)
+
 
 if __name__ == '__main__':
     main()
+
