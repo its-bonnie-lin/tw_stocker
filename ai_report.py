@@ -1385,6 +1385,14 @@ def parse_args():
         help='啟用 Breadth-aware regime：用 universe 內部寬度修正 regime 判斷'
     )
     parser.add_argument(
+        '--candidate-breadth', action='store_true',
+        help='啟用候選寬度：前 15 名候選股 20MA 支撐品質檢查'
+    )
+    parser.add_argument(
+        '--theme-breadth', action='store_true',
+        help='啟用主題寬度：前 15 名候選股板塊集中度檢查'
+    )
+    parser.add_argument(
         '--residual-momentum', action='store_true',
         help='啟用殘差動量：扣除市場 beta 後的個股動量'
     )
@@ -1519,6 +1527,8 @@ def main():
         confidence_k=args.confidence_k,
         mid_hold_review=args.mid_hold_review,
         breadth_regime=args.breadth_regime,
+        candidate_breadth=args.candidate_breadth,
+        theme_breadth=args.theme_breadth,
         dynamic_sector_cap=args.dynamic_sector_cap,
         gap_aware_sizing=args.gap_aware_sizing,
         buy_cost=args.buy_cost,

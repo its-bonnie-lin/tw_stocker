@@ -111,6 +111,8 @@ class EventDrivenBacktester:
                  confidence_k=False,
                  mid_hold_review=False,
                  breadth_regime=False,
+                 candidate_breadth=False,
+                 theme_breadth=False,
                  dynamic_sector_cap=False,
                  gap_aware_sizing=False,
                  buy_cost=0.001425, sell_cost=0.004425):
@@ -148,6 +150,8 @@ class EventDrivenBacktester:
         self.confidence_k = confidence_k
         self.mid_hold_review = mid_hold_review
         self.breadth_regime = breadth_regime
+        self.candidate_breadth = candidate_breadth
+        self.theme_breadth = theme_breadth
         self.dynamic_sector_cap = dynamic_sector_cap
         self.gap_aware_sizing = gap_aware_sizing
         self.buy_cost = buy_cost
@@ -668,6 +672,44 @@ class EventDrivenBacktester:
                     candidates = filtered_candidates
 
                 # Confidence-K: 動態調整 top_k
+                # === Candidate Breadth：前 15 名動量品質檢查 ===
+                if self.candidate_breadth and len(candidates) >= 5 and self._ma20_all is not None:
+                    try:
+                        top15 = [c[0] for c in candidates[:15]]
+                        above = 0
+                        total = 0
+                        for t in top15:
+                            if t in close_df.columns:
+                                p = close_df[t].iloc[i - 1] if i - 1 >= 0 else np.nan
+                                m = self._ma20_all[t].iloc[i - 1] if i - 1 >= 0 else np.nan
+                                if not pd.isna(p) and not pd.isna(m):
+                                    total += 1
+                                    if p > m:
+                                        above += 1
+                        if total >= 5:
+                            cand_breadth = above / total
+                            if cand_breadth < 0.40:
+                                regime_scale = min(regime_scale, 0.4)
+                            elif cand_breadth < 0.55:
+                                regime_scale = min(regime_scale, 0.6)
+                    except Exception:
+                        pass
+
+                # === Theme Breadth：前 15 名板塊集中度檢查 ===
+                if self.theme_breadth and len(candidates) >= 5:
+                    try:
+                        top15 = [c[0] for c in candidates[:15]]
+                        elec_prefixes = ('23','24','30','33','34','35','36','37',
+                                         '49','61','63','64','65','66','67','68','69')
+                        elec_count = sum(1 for t in top15 if str(t).startswith(elec_prefixes))
+                        theme_ratio = elec_count / len(top15)
+                        if theme_ratio > 0.80:
+                            regime_scale = min(regime_scale, 0.6)
+                        elif theme_ratio > 0.70:
+                            regime_scale = min(regime_scale, 0.75)
+                    except Exception:
+                        pass
+
                 effective_top_k = top_k
                 if self.confidence_k and len(candidates) >= 3:
                     scores = [c[1] for c in candidates[:min(top_k + 3, len(candidates))]]
