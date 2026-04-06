@@ -20,9 +20,11 @@ Paper Trading 比對工具
   # 5. 風險警報（檢查回撤）
   python paper_trade.py alert --max-dd 12
 
-LINE Notify 設定:
-  export LINE_NOTIFY_TOKEN='your_token_here'
-  # 申請地址: https://notify-bot.line.me/my/
+Telegram 通知設定:
+  export TELEGRAM_BOT_TOKEN='your_bot_token'
+  export TELEGRAM_CHAT_ID='your_chat_id'
+  # 建立 Bot: https://t.me/BotFather → /newbot
+  # 取得 Chat ID: https://t.me/userinfobot
 """
 
 import json
@@ -36,24 +38,23 @@ TRADE_LOG = 'paper_trades.json'
 SIGNAL_LOG = 'paper_signals.json'
 
 
-def send_line_notify(message):
-    """透過 LINE Notify 傳送通知。需設定環境變數 LINE_NOTIFY_TOKEN。"""
-    token = os.environ.get('LINE_NOTIFY_TOKEN')
-    if not token:
+def send_telegram(message):
+    """透過 Telegram Bot 傳送通知。需設定 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID。"""
+    token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    if not token or not chat_id:
         return False
     try:
         import urllib.request
         import urllib.parse
-        data = urllib.parse.urlencode({'message': message}).encode()
-        req = urllib.request.Request(
-            'https://notify-api.line.me/api/notify',
-            data=data,
-            headers={'Authorization': f'Bearer {token}'}
-        )
+        import json as _json
+        url = f'https://api.telegram.org/bot{token}/sendMessage'
+        data = _json.dumps({'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'}).encode()
+        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
         urllib.request.urlopen(req, timeout=10)
         return True
     except Exception as e:
-        print(f'   ⚠️ LINE 通知失敗: {e}')
+        print(f'   ⚠️ Telegram 通知失敗: {e}')
         return False
 
 
@@ -120,15 +121,15 @@ def generate_signals(args):
         save_json(SIGNAL_LOG, signals)
         print(f"\n✅ {len(new_signals)} 筆信號已記錄到 {SIGNAL_LOG}")
 
-        # LINE 通知
+        # Telegram 通知
         if hasattr(args, 'notify') and args.notify:
-            msg = f"\n📊 今日執行信號 ({today})\n"
+            msg = f"📊 今日執行信號 ({today})\n"
             for s in new_signals:
-                msg += f"{s['ticker']} 進場{s['entry_price']:.1f} TP{s['tp_price']:.1f} SL{s['sl_price']:.1f}\n"
-            if send_line_notify(msg):
-                print("📤 已傳送 LINE 通知")
+                msg += f"<b>{s['ticker']}</b> 進場{s['entry_price']:.1f} TP{s['tp_price']:.1f} SL{s['sl_price']:.1f}\n"
+            if send_telegram(msg):
+                print("📤 已傳送 Telegram 通知")
             else:
-                print("⚠️ LINE 通知未設定（設定 LINE_NOTIFY_TOKEN 環境變數）")
+                print("⚠️ Telegram 未設定（設定 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID）")
 
 
 def log_trade(args):
@@ -239,10 +240,10 @@ def check_alert(args):
     print(f"   警報門檻: -{max_dd:.1f}%")
 
     if mdd > max_dd:
-        msg = f"\n🚨 風險警報！MDD -{mdd:.1f}% 已超過門檻 -{max_dd:.1f}%\n建議次月減半部位或暫停新倉"
+        msg = f"🚨 風險警報！MDD -{mdd:.1f}% 已超過門檻 -{max_dd:.1f}%\n建議次月減半部位或暫停新倉"
         print(msg)
-        if send_line_notify(msg):
-            print("📤 已傳送 LINE 警報")
+        if send_telegram(msg):
+            print("📤 已傳送 Telegram 警報")
         sys.exit(1)
     else:
         print(f"   ✅ MDD 在安全範圍內")
@@ -254,7 +255,7 @@ def main():
 
     # signals
     sig_parser = subparsers.add_parser('signals', help='擷取今日信號')
-    sig_parser.add_argument('--notify', action='store_true', help='傳送 LINE 通知')
+    sig_parser.add_argument('--notify', action='store_true', help='傳送 Telegram 通知')
 
     # log
     log_parser = subparsers.add_parser('log', help='記錄實際成交')
