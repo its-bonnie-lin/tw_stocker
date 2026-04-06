@@ -40,7 +40,7 @@ from strategy.ai_strategy import fetch_panel_data, engineer_features, build_liqu
 from strategy.event_backtest import EventDrivenBacktester
 from strategy.risk_metrics import compute_risk_metrics, format_metrics_summary
 from strategy.benchmark import fetch_benchmark, equal_weight_benchmark, compute_excess_return
-from strategy.institutional_flow import build_inst_flow_df, get_inst_flow_for_signals
+from strategy.institutional_flow import build_inst_flow_df, get_inst_flow_for_signals, fetch_inst_rankings
 from strategy.news_sentiment import get_news_sentiment_for_signals
 
 # 嘗試載入 exchange_calendars
@@ -129,9 +129,103 @@ def get_next_n_trading_days(from_date, n_days):
     return approx_date.strftime('%Y-%m-%d')
 
 
+def _build_inst_section():
+    """
+    建立三大法人籌碼動態 HTML section。
+    從 tw-institutional-stocker 抓取 20 日持股變化排名，呈現買超/賣超 Top-15。
+    """
+    try:
+        up_list = fetch_inst_rankings(20, 'up') or []
+        down_list = fetch_inst_rankings(20, 'down') or []
+    except Exception:
+        return '<h2>🏛️ 三大法人籌碼動態</h2><p class="section-note">⚠️ 籌碼數據暫時無法取得</p>'
+
+    if not up_list and not down_list:
+        return '<h2>🏛️ 三大法人籌碼動態</h2><p class="section-note">⚠️ 無籌碼數據</p>'
+
+    # 過濾 ETF（code 5 碼以上通常為 ETF）
+    up_stocks = [x for x in up_list if len(x.get('code', '')) == 4][:15]
+    down_stocks = [x for x in down_list if len(x.get('code', '')) == 4][:15]
+
+    # 買超表
+    buy_rows = ""
+    for i, item in enumerate(up_stocks, 1):
+        code = item.get('code', '')
+        name = item.get('name', '')
+        change = item.get('change', 0.0)
+        ratio = item.get('three_inst_ratio', 0.0)
+        bar_width = min(change * 8, 100)
+        buy_rows += (
+            f'<tr>'
+            f'<td style="text-align:center;color:#888;">{i}</td>'
+            f'<td><b>{code}</b> {name}</td>'
+            f'<td style="text-align:right;color:#00ff00;font-weight:bold;">+{change:.1f}%</td>'
+            f'<td style="text-align:right;">{ratio:.1f}%</td>'
+            f'<td><div style="background:linear-gradient(90deg,#00ff0044 {bar_width}%,transparent {bar_width}%);'
+            f'height:18px;border-radius:3px;"></div></td>'
+            f'</tr>\n'
+        )
+
+    # 賣超表
+    sell_rows = ""
+    for i, item in enumerate(down_stocks, 1):
+        code = item.get('code', '')
+        name = item.get('name', '')
+        change = item.get('change', 0.0)
+        ratio = item.get('three_inst_ratio', 0.0)
+        bar_width = min(abs(change) * 8, 100)
+        sell_rows += (
+            f'<tr>'
+            f'<td style="text-align:center;color:#888;">{i}</td>'
+            f'<td><b>{code}</b> {name}</td>'
+            f'<td style="text-align:right;color:#ff4444;font-weight:bold;">-{abs(change):.1f}%</td>'
+            f'<td style="text-align:right;">{ratio:.1f}%</td>'
+            f'<td><div style="background:linear-gradient(90deg,#ff444444 {bar_width}%,transparent {bar_width}%);'
+            f'height:18px;border-radius:3px;"></div></td>'
+            f'</tr>\n'
+        )
+
+    html = f"""
+    <h2>🏛️ 三大法人籌碼動態</h2>
+    <p class="section-note">
+        近 20 日三大法人（外資+投信+自營商）持股比重變化排名。Data: <a href="https://github.com/voidful/tw-institutional-stocker" style="color:#4FC3F7;">tw-institutional-stocker</a>
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <div>
+            <h3 style="color:#00ff00;margin-bottom:8px;">🟢 法人買超 Top-15（20日）</h3>
+            <table style="width:100%;">
+                <thead><tr>
+                    <th style="width:30px;">#</th>
+                    <th>股票</th>
+                    <th style="text-align:right;">變化</th>
+                    <th style="text-align:right;">持股</th>
+                    <th style="width:80px;">幅度</th>
+                </tr></thead>
+                <tbody>{buy_rows}</tbody>
+            </table>
+        </div>
+        <div>
+            <h3 style="color:#ff4444;margin-bottom:8px;">🔴 法人賣超 Top-15（20日）</h3>
+            <table style="width:100%;">
+                <thead><tr>
+                    <th style="width:30px;">#</th>
+                    <th>股票</th>
+                    <th style="text-align:right;">變化</th>
+                    <th style="text-align:right;">持股</th>
+                    <th style="width:80px;">幅度</th>
+                </tr></thead>
+                <tbody>{sell_rows}</tbody>
+            </table>
+        </div>
+    </div>
+"""
+    return html
+
+
+
 def generate_report(trades_df, equity_df, total_score, close_df, config,
                     metrics, benchmark_equity=None, ew_equity=None,
-                    high_df=None, low_df=None, show_inst=False):
+                    high_df=None, low_df=None, show_inst=True):
     """
     產出 AI 交易計畫 HTML 報表與資金曲線圖（v2 完整版）。
 
@@ -263,19 +357,21 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
 
     trading_plan_rows = ""
 
-    # 籌碼 + 新聞標注（opt-in）
+    # 籌碼 + 新聞標注（always on）
+    all_tickers = [t for t, _, _ in selected] + [t for t, _, _ in not_selected[:5]]
     inst_data = {}
     news_data = {}
-    if show_inst:
-        all_tickers = [t for t, _, _ in selected] + [t for t, _, _ in not_selected[:5]]
-        try:
-            inst_data = get_inst_flow_for_signals(all_tickers)
-        except Exception:
-            inst_data = {}
-        try:
-            news_data = get_news_sentiment_for_signals(all_tickers)
-        except Exception:
-            news_data = {}
+    try:
+        inst_data = get_inst_flow_for_signals(all_tickers)
+    except Exception:
+        inst_data = {}
+    try:
+        news_data = get_news_sentiment_for_signals(all_tickers)
+    except Exception:
+        news_data = {}
+
+    # 籌碼動態 HTML section
+    inst_section_html = _build_inst_section()
 
     # 顯示 Top-K 建議買進
     for rank, (ticker, score, price) in enumerate(selected, 1):
@@ -340,18 +436,17 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             hist_badge = '<span style="font-size:0.72rem; color:#555;">歷史資料不足</span>'
 
         # 籌碼 + 新聞標注
-        inst_badge = ''
-        if show_inst:
-            idata = inst_data.get(ticker, {})
-            ndata = news_data.get(ticker, {})
-            inst_change = idata.get('change', 0.0)
-            inst_label = idata.get('label', '⚪ 無資料')
-            news_label = ndata.get('label', '⚪ 中性')
-            inst_badge = (
-                f'<td><span style="font-size:0.75rem;">{inst_label}'
-                f'<br><span style="color:#888">{inst_change:+.1f}%</span></span></td>'
-                f'<td><span style="font-size:0.75rem;">{news_label}</span></td>'
-            )
+        idata = inst_data.get(ticker, {})
+        ndata = news_data.get(ticker, {})
+        inst_change = idata.get('change', 0.0)
+        inst_label = idata.get('label', '⚪ 無資料')
+        news_label = ndata.get('label', '⚪ 中性')
+        inst_color = '#00ff00' if inst_change > 2 else '#ff4444' if inst_change < -2 else '#ffab00' if abs(inst_change) > 0.5 else '#888'
+        inst_badge = (
+            f'<td><span style="font-size:0.78rem;">{inst_label}'
+            f'<br><span style="color:{inst_color}; font-weight:bold;">{inst_change:+.1f}%</span></span></td>'
+            f'<td><span style="font-size:0.78rem;">{news_label}</span></td>'
+        )
 
         trading_plan_rows += (
             f'<tr><td>{ticker}</td><td>{score:.2f}</td>'
@@ -368,14 +463,15 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             wr_color = '#00ff00' if ss['win_rate'] >= 50 else '#ff4444'
             hist_badge = f'<span style="font-size:0.72rem; color:#888;">勝率 <b style="color:{wr_color}">{ss["win_rate"]:.0f}%</b></span>'
 
-        inst_badge = ''
-        if show_inst:
-            idata = inst_data.get(ticker, {})
-            ndata = news_data.get(ticker, {})
-            inst_badge = (
-                f'<td><span style="font-size:0.72rem;">{idata.get("label", "⚪")}</span></td>'
-                f'<td><span style="font-size:0.72rem;">{ndata.get("label", "⚪")}</span></td>'
-            )
+        idata = inst_data.get(ticker, {})
+        ndata = news_data.get(ticker, {})
+        inst_change = idata.get('change', 0.0)
+        inst_color = '#00ff00' if inst_change > 2 else '#ff4444' if inst_change < -2 else '#888'
+        inst_badge = (
+            f'<td><span style="font-size:0.72rem;">{idata.get("label", "⚪")}'
+            f'<br><span style="color:{inst_color}">{inst_change:+.1f}%</span></span></td>'
+            f'<td><span style="font-size:0.72rem;">{ndata.get("label", "⚪")}</span></td>'
+        )
 
         trading_plan_rows += (
             f'<tr style="opacity:0.6"><td>{ticker}</td><td>{score:.2f}</td>'
@@ -387,9 +483,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
     for ticker, score, price, reason in filtered_out[:5]:
         status = f'<span style="color:#aaaaaa">⚪ 觀望 ({reason})</span>'
         price_str = f'{price:.1f}' if not pd.isna(price) else '-'
-        inst_badge = ''
-        if show_inst:
-            inst_badge = '<td>-</td><td>-</td>'
+        inst_badge = '<td style="color:#555">-</td><td style="color:#555">-</td>'
         trading_plan_rows += (
             f'<tr style="opacity:0.4"><td>{ticker}</td><td>{score:.2f}</td>'
             f'<td>{price_str}</td><td>{status}</td><td>-</td>'
@@ -977,13 +1071,16 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
                 <th>操作狀態</th>
                 <th>🎯 區間執行計畫</th>
                 <th>📊 歷史績效</th>
-{'                <th>\U0001F3DB\uFE0F 籌碼</th>' + chr(10) + '                <th>\U0001F4F0 新聞</th>' + chr(10) if show_inst else ''}
+                <th>🏛️ 籌碼</th>
+                <th>📰 新聞</th>
             </tr>
         </thead>
         <tbody>
 {trading_plan_rows}
         </tbody>
     </table>
+
+{inst_section_html}
 
     <h2>📈 資金曲線 vs Benchmark</h2>
 {benchmark_stats_html}
@@ -1267,8 +1364,12 @@ def parse_args():
         help='籌碼因子權重 (預設 0 = 停用; 建議先用 0 觀察，累積數據後再加權)'
     )
     parser.add_argument(
-        '--show-inst', action='store_true',
-        help='在報表信號中顯示三大法人籌碼與新聞情緒標注'
+        '--show-inst', action='store_true', default=True,
+        help='在報表信號中顯示三大法人籌碼與新聞情緒標注 (預設開啟)'
+    )
+    parser.add_argument(
+        '--no-show-inst', dest='show_inst', action='store_false',
+        help='關閉籌碼與新聞標注'
     )
 
     return parser.parse_args()
@@ -1310,9 +1411,9 @@ def main():
     else:
         universe_mask = None
 
-    # Phase 2.5: 籌碼數據（可選）
+    # Phase 2.5: 籌碼時序數據（僅用於因子加權；報表顯示使用輕量 API）
     inst_flow_df = None
-    if args.inst_flow > 0 or args.show_inst:
+    if args.inst_flow > 0:
         try:
             inst_flow_df, inst_ratio_df = build_inst_flow_df(
                 list(close_df.columns), close_df, verbose=True)
