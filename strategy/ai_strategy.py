@@ -132,7 +132,11 @@ def build_liquid_universe(close_df, vol_df, top_n=50, lookback=20):
 def engineer_features(close_df, vol_df, universe_mask=None,
                       ma_period=60, short_ma_period=20, multi_ma=False,
                       ml_weights=False, inst_flow_weight=0.0,
-                      inst_flow_df=None):
+                      inst_flow_df=None,
+                      residual_momentum=False,
+                      trend_quality=False,
+                      liq_stability=False,
+                      market_close=None):
     """
     計算 AI 多維度特徵並做橫向百分位排名。
 
@@ -183,40 +187,68 @@ def engineer_features(close_df, vol_df, universe_mask=None,
 
     # 短期均線（多均線確認用）
     short_ma = close_df.rolling(short_ma_period).mean() if multi_ma else None
+    ma_20 = close_df.rolling(20).mean()
 
     # === ATR 計算 (用於 TP/SL 與 sizing) ===
     atr_df = close_df.pct_change().abs().rolling(20).mean() * close_df
 
-    # === 橫向百分位排名 (Cross-Sectional Percentile Rank) ===
-    if universe_mask is not None:
-        masked_mom = mom_20.where(universe_mask)
-        masked_trend = trend_bias.where(universe_mask)
-        masked_vol = vol_surge.where(universe_mask)
-        masked_stab = stability.where(universe_mask)
+    # === 殘差動量：扣除市場 beta ===
+    residual_mom = None
+    if residual_momentum and market_close is not None:
+        try:
+            stock_ret = close_df.pct_change()
+            mkt_ret = market_close.pct_change()
+            mkt_ret_aligned = mkt_ret.reindex(stock_ret.index, method='ffill')
+            stock_cum_20 = stock_ret.rolling(20).sum()
+            mkt_cum_20 = mkt_ret_aligned.rolling(20).sum()
+            residual_mom = stock_cum_20.sub(mkt_cum_20, axis=0)
+            print("   \U0001f52c 殘差動量已計算 (market-beta adjusted)")
+        except Exception as e:
+            print(f"   ⚠️ 殘差動量計算失敗: {e}")
 
-        rank_mom = masked_mom.rank(axis=1, pct=True)
-        rank_trend = masked_trend.rank(axis=1, pct=True)
-        rank_vol = masked_vol.rank(axis=1, pct=True)
-        rank_stab = masked_stab.rank(axis=1, pct=True)
-    else:
-        rank_mom = mom_20.rank(axis=1, pct=True)
-        rank_trend = trend_bias.rank(axis=1, pct=True)
-        rank_vol = vol_surge.rank(axis=1, pct=True)
-        rank_stab = stability.rank(axis=1, pct=True)
+    # === 趨勢品質 ===
+    tq_score = None
+    if trend_quality:
+        try:
+            ma60_slope = (ma_long - ma_long.shift(5)) / (ma_long.shift(5) + 1e-8)
+            ma_alignment = ((close_df > ma_20) & (ma_20 > ma_long)).astype(float)
+            overheat = (close_df / ma_20 - 1).clip(lower=0)
+            overheat_penalty = 1 - overheat.clip(upper=0.15) / 0.15
+            tq_score = ma60_slope * 100 + ma_alignment * 0.5 + overheat_penalty * 0.3
+            print("   \U0001f4d0 趨勢品質已計算")
+        except Exception as e:
+            print(f"   ⚠️ 趨勢品質計算失敗: {e}")
+
+    # === 流動性穩定度 ===
+    liq_stab = None
+    if liq_stability:
+        try:
+            turnover = close_df * vol_df
+            liq_stab = turnover.rolling(20).mean() / (turnover.rolling(20).std() + 1e-8)
+            print("   \U0001f4a7 流動性穩定度已計算")
+        except Exception:
+            pass
+
+    # === 橫向百分位排名 ===
+    def _rank(df):
+        if universe_mask is not None:
+            return df.where(universe_mask).rank(axis=1, pct=True)
+        return df.rank(axis=1, pct=True)
+
+    rank_mom = _rank(mom_20)
+    rank_trend = _rank(trend_bias)
+    rank_res_mom = _rank(residual_mom) if residual_mom is not None else None
+    rank_tq = _rank(tq_score) if tq_score is not None else None
+    rank_liq = _rank(liq_stab) if liq_stab is not None else None
 
     # === 籌碼因子排名 ===
     rank_inst = None
     if inst_flow_weight > 0 and inst_flow_df is not None:
-        # 對齊並排名
         inst_aligned = inst_flow_df.reindex(
             index=close_df.index, columns=close_df.columns
         )
-        if universe_mask is not None:
-            masked_inst = inst_aligned.where(universe_mask)
-            rank_inst = masked_inst.rank(axis=1, pct=True)
-        else:
-            rank_inst = inst_aligned.rank(axis=1, pct=True)
-        print(f"   🏛️ 籌碼因子已載入 (weight={inst_flow_weight})")
+        rank_inst = _rank(inst_aligned)
+        print(f"   \U0001f3db\ufe0f 籌碼因子已載入 (weight={inst_flow_weight})")
 
     # === 因子加權 ===
     if ml_weights:
@@ -224,8 +256,11 @@ def engineer_features(close_df, vol_df, universe_mask=None,
             close_df, rank_mom, rank_trend, rank_vol, rank_stab, universe_mask
         )
     else:
-        # Method C: 動量主導 + 輕量趨勢確認 (交叉驗證最佳)
-        total_score = rank_mom * 3 + rank_trend * 1
+        mom_factor = rank_res_mom if rank_res_mom is not None else rank_mom
+        trend_factor = rank_tq if rank_tq is not None else rank_trend
+        total_score = mom_factor * 3 + trend_factor * 1
+        if rank_liq is not None:
+            total_score = total_score + rank_liq * 0.3
 
     # 籌碼因子加權（opt-in）
     if rank_inst is not None and inst_flow_weight > 0:

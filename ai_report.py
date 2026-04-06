@@ -1379,6 +1379,31 @@ def parse_args():
         '--mid-hold-review', action='store_true',
         help='啟用中期汰弱：持有 10-14 天仍虧損且動量衰退→提早出場'
     )
+    # === Phase 2 features ===
+    parser.add_argument(
+        '--breadth-regime', action='store_true',
+        help='啟用 Breadth-aware regime：用 universe 內部寬度修正 regime 判斷'
+    )
+    parser.add_argument(
+        '--residual-momentum', action='store_true',
+        help='啟用殘差動量：扣除市場 beta 後的個股動量'
+    )
+    parser.add_argument(
+        '--trend-quality', action='store_true',
+        help='啟用趨勢品質：slope + 均線排列 + 過熱抑制'
+    )
+    parser.add_argument(
+        '--gap-aware-sizing', action='store_true',
+        help='啟用 Gap-aware sizing：跳空越大，進場倉位越小'
+    )
+    parser.add_argument(
+        '--dynamic-sector-cap', action='store_true',
+        help='啟用動態板塊上限：regime 越弱，sector cap 越緊'
+    )
+    parser.add_argument(
+        '--liq-stability', action='store_true',
+        help='啟用流動性穩定度：排除突然爆量但平常不穩的標的'
+    )
     parser.add_argument(
         '--show-inst', action='store_true', default=True,
         help='在報表信號中顯示三大法人籌碼與新聞情緒標注 (預設開啟)'
@@ -1437,6 +1462,14 @@ def main():
             print(f"   ⚠️ 籌碼數據抓取失敗，跳過: {e}")
             inst_flow_df = None
 
+    # Phase 3.5: 提前下載 0050 用於 regime filter + 殘差動量
+    market_close = None
+    if args.regime_filter or args.residual_momentum:
+        print("\n📊 下載大盤指數 (0050) 用於 regime filter...")
+        bench_raw = fetch_benchmark('0050', days=args.days)
+        if len(bench_raw) > 0:
+            market_close = bench_raw * bench_raw.iloc[0]
+
     # Phase 3: 特徵工程
     total_score, ma_60, atr_df, short_ma = engineer_features(
         close_df, vol_df, universe_mask,
@@ -1445,15 +1478,11 @@ def main():
         ml_weights=args.ml_weights,
         inst_flow_weight=args.inst_flow,
         inst_flow_df=inst_flow_df,
+        residual_momentum=args.residual_momentum,
+        trend_quality=args.trend_quality,
+        liq_stability=args.liq_stability,
+        market_close=market_close,
     )
-
-    # Phase 3.5: 提前下載 0050 用於 regime filter
-    market_close = None
-    if args.regime_filter:
-        print("\n📊 下載大盤指數 (0050) 用於 regime filter...")
-        bench_raw = fetch_benchmark('0050', days=args.days)
-        if len(bench_raw) > 0:
-            market_close = bench_raw * bench_raw.iloc[0]
 
     # Phase 4: 事件驅動回測
     backtester = EventDrivenBacktester(
@@ -1489,6 +1518,9 @@ def main():
         regime_deleverage=args.regime_delev,
         confidence_k=args.confidence_k,
         mid_hold_review=args.mid_hold_review,
+        breadth_regime=args.breadth_regime,
+        dynamic_sector_cap=args.dynamic_sector_cap,
+        gap_aware_sizing=args.gap_aware_sizing,
         buy_cost=args.buy_cost,
         sell_cost=args.sell_cost,
     )
@@ -1498,6 +1530,7 @@ def main():
         threshold=args.threshold,
         market_close=market_close,
         vol_df=vol_df,
+        universe_mask=universe_mask,
     )
 
     # Phase 5: 風險指標

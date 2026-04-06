@@ -110,6 +110,9 @@ class EventDrivenBacktester:
                  regime_deleverage=False,
                  confidence_k=False,
                  mid_hold_review=False,
+                 breadth_regime=False,
+                 dynamic_sector_cap=False,
+                 gap_aware_sizing=False,
                  buy_cost=0.001425, sell_cost=0.004425):
         self.tp_pct = tp_pct
         self.sl_pct = sl_pct
@@ -144,6 +147,9 @@ class EventDrivenBacktester:
         self.regime_deleverage = regime_deleverage
         self.confidence_k = confidence_k
         self.mid_hold_review = mid_hold_review
+        self.breadth_regime = breadth_regime
+        self.dynamic_sector_cap = dynamic_sector_cap
+        self.gap_aware_sizing = gap_aware_sizing
         self.buy_cost = buy_cost
         self.sell_cost = sell_cost
 
@@ -164,7 +170,7 @@ class EventDrivenBacktester:
 
     def run(self, total_score, close_df, open_df, high_df, low_df, ma_60,
             top_k=3, threshold=2.0, atr_df=None,
-            market_close=None, vol_df=None):
+            market_close=None, vol_df=None, universe_mask=None):
         """
         執行事件驅動回測。
 
@@ -226,6 +232,10 @@ class EventDrivenBacktester:
               f"Top-{top_k}, 最長持有 {self.max_hold_days} 天, "
               f"成本: {cost_desc}{filter_desc})...")
 
+        # 存 universe_mask 供 breadth regime 使用
+        self._universe_mask = universe_mask
+        # 預計算 20MA 供 breadth 重用（避免迴圈內反覆 rolling）
+        self._ma20_all = close_df.rolling(20).mean() if self.breadth_regime else None
         # 計算精確 ATR（如果使用 ATR 模式）
         if self.tp_sl_mode == 'atr':
             if atr_df is None:
@@ -515,6 +525,25 @@ class EventDrivenBacktester:
                     except Exception:
                         pass
 
+                # === Breadth-aware Regime：用 universe 內部狀態修正 regime ===
+                if self.breadth_regime and regime_ok and i >= 21 and self._ma20_all is not None:
+                    try:
+                        above_20ma = (close_df.iloc[i - 1] > self._ma20_all.iloc[i - 1])
+                        if self._universe_mask is not None and i - 1 < len(self._universe_mask):
+                            day_univ = self._universe_mask.iloc[i - 1]
+                            above_20ma = above_20ma & day_univ
+                            total_in_univ = max(day_univ.sum(), 1)
+                        else:
+                            total_in_univ = len(close_df.columns)
+                        breadth_pct = above_20ma.sum() / total_in_univ
+
+                        if breadth_pct < 0.30:
+                            regime_scale = min(regime_scale, 0.3)
+                        elif breadth_pct < 0.45:
+                            regime_scale = min(regime_scale, 0.5)
+                    except Exception:
+                        pass
+
                 candidates = []
                 if regime_ok:
                     # ── 動量策略（正常模式） ──
@@ -610,13 +639,22 @@ class EventDrivenBacktester:
                 slots_available = max_positions - len(active_trades)
 
                 # 板塊分散：電子股不超過 sector_max_pct
-                if self.sector_max_pct < 1.0:
-                    # 台股電子股代碼前綴: 23xx,24xx,30xx,33xx,34xx,35xx,36xx,37xx,49xx,61xx,63xx,64xx,65xx,66xx,67xx,68xx,69xx
+                # Dynamic sector cap: regime 越弱限制越緊
+                if self.dynamic_sector_cap:
+                    if regime_scale <= 0.4:
+                        current_sector_cap = 0.25
+                    elif regime_scale <= 0.7:
+                        current_sector_cap = 0.4
+                    else:
+                        current_sector_cap = self.sector_max_pct
+                else:
+                    current_sector_cap = self.sector_max_pct
+
+                if current_sector_cap < 1.0:
                     elec_prefixes = ('23','24','30','33','34','35','36','37',
                                      '49','61','63','64','65','66','67','68','69')
-                    # 當前持倉中的電子股數
                     active_elec = sum(1 for t in active_trades if t.startswith(elec_prefixes))
-                    max_elec_total = max(1, int(max_positions * self.sector_max_pct))
+                    max_elec_total = max(1, int(max_positions * current_sector_cap))
 
                     filtered_candidates = []
                     new_elec = 0
@@ -685,6 +723,18 @@ class EventDrivenBacktester:
                     # 滑價模型：買入時價格略高
                     actual_entry = entry_price * (1 + self.slippage)
 
+                    # === Gap-aware sizing：跳空越大，倉位越小 ===
+                    gap_scale = 1.0
+                    if self.gap_aware_sizing and atr is not None:
+                        prev_close_val = close_df[ticker].iloc[i - 1] if i - 1 >= 0 else np.nan
+                        atr_val_gap = atr[ticker].iloc[i - 1] if i - 1 >= 0 else np.nan
+                        if not pd.isna(prev_close_val) and not pd.isna(atr_val_gap) and atr_val_gap > 0:
+                            gap_atr = abs(entry_price - prev_close_val) / atr_val_gap
+                            if gap_atr >= 1.0:
+                                gap_scale = 0.5   # 大跳空：半倉
+                            elif gap_atr >= 0.5:
+                                gap_scale = 0.75  # 中跳空：3/4 倉
+
                     # === 排名加權 sizing ===
                     rank_weight = 1.0
                     if self.rank_weighted and len(selected) > 1:
@@ -693,7 +743,7 @@ class EventDrivenBacktester:
                         rank_weight = raw_weights[rank_idx] / total_w * len(selected)
 
                     # === 動態風險預算：根據近期 realized vol 調整 position size ===
-                    effective_pos_size = self.position_size * rank_weight * regime_scale
+                    effective_pos_size = self.position_size * rank_weight * regime_scale * gap_scale
                     if self.dynamic_risk and market_daily_ret is not None:
                         try:
                             mkt_idx = market_close.index.get_indexer([date], method='ffill')[0]
