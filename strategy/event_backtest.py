@@ -104,6 +104,9 @@ class EventDrivenBacktester:
                  consec_loss_limit=3, consec_loss_pause=5,
                  sector_max_pct=0.6,
                  corr_filter=0,
+                 max_portfolio_heat=1.0,
+                 rank_weighted=False,
+                 regime_deleverage=False,
                  buy_cost=0.001425, sell_cost=0.004425):
         self.tp_pct = tp_pct
         self.sl_pct = sl_pct
@@ -132,6 +135,9 @@ class EventDrivenBacktester:
         self.consec_loss_pause = consec_loss_pause
         self.sector_max_pct = sector_max_pct
         self.corr_filter = corr_filter
+        self.max_portfolio_heat = max_portfolio_heat
+        self.rank_weighted = rank_weighted
+        self.regime_deleverage = regime_deleverage
         self.buy_cost = buy_cost
         self.sell_cost = sell_cost
 
@@ -277,6 +283,7 @@ class EventDrivenBacktester:
         dd_pause_counter = 0     # 回撤卡剩餘暫停天數
         consec_sl_count = 0      # 連續停損筆數
         cl_pause_counter = 0     # 連損卡剩餘暫停天數
+        regime_below_count = 0   # 大盤連續低於 60MA 的天數
 
         # 從第 60 天開始（確保技術指標已穩定）
         for i in range(60, len(dates)):
@@ -319,11 +326,16 @@ class EventDrivenBacktester:
                 exit_triggered = False
                 exit_price = 0
                 exit_reason = ""
+                current_open = open_df[ticker].iloc[i] if ticker in open_df.columns else np.nan
 
                 # 優先檢查停損 / trailing stop（保守回測法）
+                # Gap-aware fill: 若開盤已穿越停損，成交價 = min(stop, open)
                 if current_low <= trade['sl_price']:
                     exit_triggered = True
-                    exit_price = trade['sl_price']
+                    if not pd.isna(current_open) and current_open < trade['sl_price']:
+                        exit_price = current_open  # gap down: 成交在開盤價
+                    else:
+                        exit_price = trade['sl_price']
                     # 區分初始停損 vs trailing stop 觸發
                     if (self.trailing_stop
                             and trade['sl_price'] > trade['initial_sl_price']):
@@ -331,9 +343,12 @@ class EventDrivenBacktester:
                     else:
                         exit_reason = "🔴 停損"
                 elif (not self.trailing_stop) and current_high >= trade['tp_price']:
-                    # 固定 TP 僅在非 trailing 模式下生效
+                    # Gap-aware fill: 若開盤已穿越停利，成交價 = max(tp, open)
                     exit_triggered = True
-                    exit_price = trade['tp_price']
+                    if not pd.isna(current_open) and current_open > trade['tp_price']:
+                        exit_price = current_open  # gap up: 成交在開盤價（更有利）
+                    else:
+                        exit_price = trade['tp_price']
                     exit_reason = "🟢 停利"
                 elif trade['days_held'] >= self.max_hold_days:
                     exit_triggered = True
@@ -401,6 +416,55 @@ class EventDrivenBacktester:
                 dd_pause_counter -= 1
             if cl_pause_counter > 0:
                 cl_pause_counter -= 1
+
+            # ── Step 2.5: Regime Deleverage：大盤翻空後分段降曝險 ──
+            if self.regime_deleverage and market_ma60 is not None and active_trades:
+                try:
+                    mkt_date = market_close.index.get_indexer([date], method='ffill')[0]
+                    if mkt_date >= 0:
+                        mkt_val = market_close.iloc[mkt_date]
+                        mkt_ma = market_ma60.iloc[mkt_date]
+                        if not pd.isna(mkt_val) and not pd.isna(mkt_ma):
+                            if mkt_val < mkt_ma:
+                                regime_below_count += 1
+                            else:
+                                regime_below_count = 0
+
+                            # Stage 1: 連續 2 天 < 60MA → 平掉虧損超過 -3% 的部位
+                            if regime_below_count >= 2:
+                                delev_tickers = []
+                                for ticker, trade in active_trades.items():
+                                    cur_price = close_df[ticker].iloc[i]
+                                    if pd.isna(cur_price):
+                                        continue
+                                    unrealized = (cur_price / trade['entry_price']) - 1
+                                    if unrealized < -0.03:
+                                        # 強制出場：用當日收盤價
+                                        exit_price_dv = cur_price * (1 - self.slippage)
+                                        revenue = trade['shares'] * exit_price_dv * (1 - self.sell_cost)
+                                        capital += revenue
+                                        profit_pct = (exit_price_dv * (1 - self.sell_cost)) / \
+                                                     (trade['entry_price'] * (1 + self.buy_cost)) - 1
+                                        trades.append({
+                                            'Ticker': ticker,
+                                            'Entry_Date': trade['entry_date'],
+                                            'Exit_Date': date,
+                                            'Entry_Price': trade['entry_price'],
+                                            'Exit_Price': cur_price,
+                                            'Return_Pct': profit_pct,
+                                            'Days_Held': trade['days_held'],
+                                            'Reason': '🟠 Regime降曝',
+                                            'TP_Price': trade['tp_price'],
+                                            'SL_Price': trade['sl_price'],
+                                        })
+                                        delev_tickers.append(ticker)
+                                        if ticker not in ticker_history:
+                                            ticker_history[ticker] = []
+                                        ticker_history[ticker].append(profit_pct)
+                                for t in delev_tickers:
+                                    del active_trades[t]
+                except Exception:
+                    pass
 
             # ── Step 3: 處理今日進場（根據昨日收盤信號，今日 open 進場） ──
             entry_allowed = (dd_pause_counter <= 0 and cl_pause_counter <= 0)
@@ -563,12 +627,30 @@ class EventDrivenBacktester:
                     except Exception:
                         pass
 
-                for ticker, score, entry_price in selected:
+                for rank_idx, (ticker, score, entry_price) in enumerate(selected):
+                    # === Portfolio Heat Cap: 進場前檢查組合總風險 ===
+                    if self.max_portfolio_heat < 1.0 and active_trades:
+                        heat = 0
+                        for t_ticker, t_trade in active_trades.items():
+                            t_price = close_df[t_ticker].iloc[i] if not pd.isna(close_df[t_ticker].iloc[i]) else t_trade['entry_price']
+                            risk_per_share = max(0, t_price - t_trade['sl_price'])
+                            heat += t_trade['shares'] * risk_per_share
+                        heat_pct = heat / current_equity if current_equity > 0 else 0
+                        if heat_pct >= self.max_portfolio_heat:
+                            continue  # 組合熱度已滿，跳過新進場
+
                     # 滑價模型：買入時價格略高
                     actual_entry = entry_price * (1 + self.slippage)
 
+                    # === 排名加權 sizing ===
+                    rank_weight = 1.0
+                    if self.rank_weighted and len(selected) > 1:
+                        raw_weights = [1.4 - 0.2 * j for j in range(len(selected))]
+                        total_w = sum(raw_weights)
+                        rank_weight = raw_weights[rank_idx] / total_w * len(selected)
+
                     # === 動態風險預算：根據近期 realized vol 調整 position size ===
-                    effective_pos_size = self.position_size
+                    effective_pos_size = self.position_size * rank_weight
                     if self.dynamic_risk and market_daily_ret is not None:
                         try:
                             mkt_idx = market_close.index.get_indexer([date], method='ffill')[0]
@@ -577,7 +659,7 @@ class EventDrivenBacktester:
                                 target_vol = 0.01  # 目標日波動 1%
                                 if not pd.isna(recent_vol) and recent_vol > 0:
                                     vol_scalar = min(2.0, max(0.3, target_vol / recent_vol))
-                                    effective_pos_size = self.position_size * vol_scalar
+                                    effective_pos_size = effective_pos_size * vol_scalar
                         except Exception:
                             pass
 

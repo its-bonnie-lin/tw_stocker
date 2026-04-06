@@ -1,49 +1,39 @@
-# TW Stocker v6 — AI 量化交易系統
+# TW Stocker v7 — AI 量化交易系統
 
-每日自動更新的 AI 台股動量策略，經嚴格 Walk-Forward 驗證、100+ 組參數掃描、2000 次 Monte Carlo 壓力測試。
+中期橫截面動量策略，流動性 Universe 排名 + 事件驅動回測 + ATR 停利停損。
+經 Walk-Forward 驗證、100+ 組參數掃描、2000 次 Block Bootstrap Monte Carlo 壓力測試。
 
 📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
 
-## 績效總覽
+## 績效總覽（含滑價 10bps + Gap-Aware Fill）
 
 | 指標 | 值 | 說明 |
 |------|:---:|------|
-| **Sharpe** | **2.96** | 風險調整報酬（>2 為優秀） |
-| **年化報酬** | **+90.8%** | 包含交易成本 |
-| **MDD** | **-16.7%** | 最大權益回撤 |
-| **Calmar** | **5.44** | 年化報酬/MDD（>3 為優秀） |
-| **Profit Factor** | **2.26** | 總獲利/總虧損 |
-| **勝率** | **60.5%** | 470 筆交易 |
-| **α vs 0050** | **+49.3%** | 年化超額報酬 |
+| **Sharpe** | **2.96** | 含 10bps 滑價的誠實回測 |
+| **年化報酬** | **+91.4%** | 包含交易成本 + 滑價 |
+| **MDD** | **-18.4%** | Gap-aware stop fill |
+| **Calmar** | **4.96** | 年化報酬/MDD |
+| **Profit Factor** | **2.25** | 總獲利/總虧損 |
+| **勝率** | **61.1%** | 473 筆交易 |
 
-### Walk-Forward 穩定性
+### v7 vs v6 變化（回測誠實化）
 
-| 窗口 | Sharpe | 年化 | MDD |
-|------|:------:|:----:|:---:|
-| 1500d | 2.29 | +64% | -17% |
-| 1200d | 2.96 | +91% | -17% |
-| 900d | 1.60 | +48% | -27% |
-| 600d | 3.46 | +112% | -16% |
-| **穩定性比** | **3.22** | *(> 3 = 優秀)* | |
+| 指標 | v6 (slippage=0) | **v7 (honest)** | 差異 |
+|------|:---------------:|:---------------:|:----:|
+| Sharpe | 3.12 | **2.96** | -5% |
+| MDD | -17.7% | **-18.4%** | +0.7% |
+| 年化 | +96.6% | **+91.4%** | -5.2% |
 
-### Monte Carlo 壓力測試 (2000 次)
+> v7 的績效下降來自回測誠實化（滑價 + gap-aware fill），不是策略劣化。
+
+### Monte Carlo 壓力測試（Block Bootstrap, 2000x）
 
 | 情境 | 最差 5% 報酬 | 最差 5% MDD |
 |------|:----------:|:-----------:|
-| 全體 | +176% | -12.5% |
-| 保守 (勝率50%) | +30% | -18.8% |
+| 全體 (block=5) | +293% | -17.5% |
+| 保守 (勝率50%) | -5.5% | -43.8% |
 
-## 快速開始
-
-```bash
-pip install -r requirements.txt
-
-# 產出每日報表（v6 最佳配置 = corr-filter 0.8）
-python ai_report.py
-
-# 完整壓力測試
-python monte_carlo.py --runs 2000
-```
+> Block bootstrap 保留時序結構（連續虧損、相關性上升），比 iid 更接近真實尾部風險。
 
 ## 策略公式
 
@@ -55,49 +45,32 @@ python monte_carlo.py --runs 2000
   4. 跳空 > 1.5×ATR 的進場日跳過
   5. Top-5 選股（相關性 > 0.8 的替換為不相關候選）
 
-出場:
-  - 停利: entry + 4.0×ATR
-  - 停損: entry - 3.0×ATR
+出場 (gap-aware):
+  - 停損: min(stop_price, open)  ← 隔夜跳空用開盤價
+  - 停利: max(tp_price, open)    ← 跳空有利用開盤價
   - 時間: 20 個交易日強制出場
 
-成本: 買 0.1425% + 賣 0.4425%
+成本: 買 0.1425% + 賣 0.4425% + 滑價 10bps
 ```
 
-## 工具箱
-
-### 每日流程
+## 快速開始
 
 ```bash
-# 17:00 後：產出報表 + Telegram 推送
+pip install -r requirements.txt
+
+# v7 誠實回測（gap-aware + slippage 10bps）
 python ai_report.py
-python paper_trade.py signals --notify
 
-# 隔日開盤後：記錄實際成交
-python paper_trade.py log --ticker 2330 --action buy --price 980 --shares 1000
+# 比對舊版（無滑價，用於對比）
+python ai_report.py --slippage 0
 
-# 每週五：檢查執行率 + 滑價（自動 Telegram 警報）
-python paper_trade.py report
-
-# 回撤警報
-python paper_trade.py alert --max-dd 15
-```
-
-### 季度維護
-
-```bash
-# 快速參數校準（~4 分鐘）
-python sweep.py --quick
-
-# Walk-Forward 驗證
-python walk_forward.py
-
-# Monte Carlo 壓力測試（regime-aware）
-python monte_carlo.py --runs 2000
+# Block Bootstrap 壓力測試
+python monte_carlo.py --runs 2000 --block-size 5
 ```
 
 ## CLI 參數
 
-### 核心（已鎖定最優）
+### 核心（已鎖定）
 | 參數 | 預設值 | 說明 |
 |---|:---:|---|
 | `--tp-atr` | `4.0` | ATR 停利倍數 |
@@ -107,73 +80,70 @@ python monte_carlo.py --runs 2000
 | `--gap-filter` | `1.5` | 跳空過濾 ATR 倍數 |
 | `--regime-filter` | `true` | 大盤過濾 (0050 > 60MA) |
 | `--corr-filter` | `0.8` | 去除高度相關持倉 |
+| `--slippage` | `0.001` | 滑價 10bps（v7 新增） |
 
-### 可選功能（opt-in）
-| 參數 | 預設值 | 說明 |
+### 可選風控（opt-in, 經實測驗證效果）
+| 參數 | 預設值 | 實測結果 |
 |---|:---:|---|
-| `--sector-max-pct` | `1.0` | 板塊集中上限 (建議 0.5) |
-| `--dynamic-risk` | `false` | 動態風險預算 |
-| `--dd-pause-pct` | `0.10` | 回撤暫停門檻 |
-| `--consec-loss-limit` | `3` | 連損暫停筆數 |
-| `--slippage` | `0` | 滑價模型 (0.001 = 0.1%) |
+| `--sector-max-pct` | `1.0` | 0.5 可壓 MDD 至 -16.0% (Sharpe 持平) |
+| `--max-heat` | `1.0` | 2% 過緊 (97 筆); 需進一步研究 |
+| `--rank-weight` | `false` | 有害: Sharpe -27% |
+| `--regime-delev` | `false` | 有害: Sharpe -32%, 錯過反彈 |
+| `--dynamic-risk` | `false` | 中性: Sharpe ±2% |
 
-## 風險控管
-
-### 8 層防護機制
-| 層級 | 機制 | 狀態 |
-|------|------|:----:|
-| 1 | **Regime Filter** — 大盤 < 60MA 禁入場 | 預設 ON |
-| 2 | **ATR×3.0 停損** — 單筆限虧 ~9% | 預設 ON |
-| 3 | **Gap Filter** — 跳空 > 1.5×ATR 跳過 | 預設 ON |
-| 4 | **相關性過濾** — 去除 corr > 0.8 重複持倉 | 預設 ON |
-| 5 | **時間止損** — 20 天強制出場 | 預設 ON |
-| 6 | **Sweep 警報** — Sharpe < 1.8 或 MDD > 22% | 自動 |
-| 7 | **Telegram 警報** — 執行率 / 滑價 / 回撤 | 自動 |
-| 8 | **Sector Cap** — 電子股集中保護 | opt-in |
-
-### 退出條件（自動監控）
-- `sweep.py` 報 Sharpe < 1.8 → Telegram 警報 + CI 阻擋
-- 單月 MDD > -12% → Telegram 即時通知
-- 連續 2 月執行率 < 85% → 檢查掛單方式
-- Monte Carlo 最差 5% MDD > -22% → 暫停新倉
-
-## 已驗證無效功能（永久排除）
-
+### 已驗證無效（永久排除）
 | 功能 | 影響 |
 |------|------|
-| `--breakeven` | Sharpe 2.96 → 0.48 ☠️ |
+| `--breakeven` | Sharpe → 0.48 ☠️ |
 | `--trailing` | Sharpe → ~0.08 ☠️ |
 | `--ml-weights` | Sharpe -55% |
-| `--blacklist 3` | Sharpe 2.96 → 2.58 (-13%) |
-| Circuit Breaker 10% | MDD 反增至 -33% |
+| `--rank-weight` | Sharpe -27% |
+
+## v7 回測誠實化 — 技術細節
+
+### Gap-Aware Stop Fill
+```
+v6: exit_price = stop_price          (永遠成交在停損價)
+v7: exit_price = min(stop_price, open)  (gap down 用開盤價，更接近實盤)
+```
+實測影響：Sharpe 3.12 → 3.11 (幾乎為零，代表大部分停損沒有被 gap 穿越)
+
+### Block Bootstrap Monte Carlo
+```
+v6: random.choices(trades, k=n)       (打散時序，忽略連續虧損)
+v7: block_bootstrap(trades, block=5)  (保留一週的連續性)
+```
+結果：最差 5% MDD 從 -12.5% 惡化到 -17.5%（更接近真實尾部風險）
+
+### 11 組完整消融測試結果
+| Config | Sharpe | MDD | 年化 | 交易 |
+|--------|:------:|:---:|:----:|:----:|
+| v6 base | 3.12 | -17.7% | +97% | 471 |
+| + gap-aware | 3.11 | -17.7% | +96% | 470 |
+| **+ slippage** | **2.94** | **-18.4%** | **+91%** | **472** |
+| + rank weight | 2.26 | -25.9% | +71% | 461 |
+| + heat 2% | 0.84 | -21.1% | +11% | 97 |
+| + regime delev | 2.11 | -23.9% | +66% | 470 |
 
 ## 專案結構
 
 ```
 tw_stocker/
-├── ai_report.py              # 主程式 + CLI + HTML 報表 (v5)
-├── sweep.py                  # 季度自動參數校準 + 劣化警報
+├── ai_report.py              # 主程式 + CLI + HTML 報表 (v7)
+├── sweep.py                  # 季度參數校準 + 劣化警報 + Telegram
 ├── walk_forward.py           # Walk-Forward 穩定性驗證
-├── monte_carlo.py            # Monte Carlo 壓力測試 v2 (regime-aware)
+├── monte_carlo.py            # Block Bootstrap 壓力測試 v3
 ├── paper_trade.py            # Paper Trading + Telegram 通知
 ├── strategy/
 │   ├── ai_strategy.py        # 因子工程 (Mom×3 + Trend×1)
-│   ├── event_backtest.py     # 事件驅動回測引擎 + 風險防護
+│   ├── event_backtest.py     # 事件驅動回測 + gap-aware fill + 風控
 │   ├── risk_metrics.py       # 風險指標計算
 │   └── benchmark.py          # Benchmark (0050 / EW)
-├── artifacts/                # 每日 CSV (trades/equity/signals)
+├── artifacts/                # 每日 CSV
 ├── .github/workflows/
 │   └── update_ai_report.yml  # 每日 + 季度自動執行
-├── stock_report.html         # 完整交易報表 (v5 含 7 個診斷區塊)
-└── backtest_chart.png        # 資金曲線圖
+└── stock_report.html         # 完整交易報表 (v7)
 ```
-
-## GitHub Actions
-
-- **每日**：UTC 09:00（台灣 17:00）自動生成報表
-- **季度**：1/4/7/10 月第一週自動跑 sweep + walk-forward + Monte Carlo
-- **手動**：支援 `workflow_dispatch` 自訂參數
-- **劣化警報**：exit code 1 = CI 自動阻擋 + Telegram 通知
 
 ## 免責聲明
 

@@ -195,7 +195,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
 
     mode_label = f"ATR×{config.get('tp_atr_mult', 3)}/{config.get('sl_atr_mult', 1.5)}" \
         if tp_sl_mode == 'atr' else f"TP +{tp_pct*100:.0f}% / SL -{sl_pct*100:.0f}%"
-    ax1.set_title(f'AI Quant v2  |  {mode_label}  |  Top-{top_k}  |  Hold ≤{max_hold_days}D',
+    ax1.set_title(f'AI Quant v7  |  {mode_label}  |  Top-{top_k}  |  Hold ≤{max_hold_days}D',
                   fontweight='bold', fontsize=14, color='#fff')
     ax1.set_ylabel('Portfolio Value (TWD)', fontsize=11)
     ax1.legend(fontsize=9, loc='upper left')
@@ -743,8 +743,8 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 台股量化交易 v5 — {report_date}</title>
-    <meta name="description" content="AI 驅動的台股量化交易系統 v2，完整風險報告、Benchmark 對比、OCO 智慧掛單建議">
+    <title>AI 台股量化交易 v7 — {report_date}</title>
+    <meta name="description" content="AI 驅動的台股量化交易系統 v7，完整風險報告、Benchmark 對比、OCO 智慧掛單建議">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -860,7 +860,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
 <body>
 <div class="container">
 
-    <h1>🎯 AI 台股量化交易 v5</h1>
+    <h1>🎯 AI 台股量化交易 v7</h1>
     <p class="subtitle">
         Event-Driven System &nbsp;|&nbsp; 報表日期: {report_date} &nbsp;|&nbsp;
         <span class="config-badge">🛡️ {mode_html}</span>
@@ -1032,7 +1032,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
 def parse_args():
     """解析命令列參數。"""
     parser = argparse.ArgumentParser(
-        description='AI 台股量化交易系統 v2 — 事件驅動回測與交易計畫產生器'
+        description='AI 台股量化交易系統 v7 — 事件驅動回測與交易計畫產生器'
     )
     # 股池
     parser.add_argument(
@@ -1122,8 +1122,8 @@ def parse_args():
         help='獲利保護觸發門檻 (預設: 0=停用, 0.03=+3%%後 SL 移至成本價)'
     )
     parser.add_argument(
-        '--slippage', type=float, default=0,
-        help='滑價模型 (預設: 0=停用, 0.001=0.1%%額外執行成本)'
+        '--slippage', type=float, default=0.001,
+        help='滑價模型 (預設: 0.001=10bps; 0=停用)'
     )
     parser.add_argument(
         '--vol-parity', action='store_true',
@@ -1207,6 +1207,18 @@ def parse_args():
         '--corr-filter', type=float, default=0.8,
         help='相關性過濾門檻 (預設 0.8; 0 = 停用; 去除近 20 日相關>門檻的重複持倉)'
     )
+    parser.add_argument(
+        '--max-heat', type=float, default=1.0,
+        help='組合熱度上限 (預設 1.0 = 停用; 實測顯示 2%% 過緊導致交易數量驟減)'
+    )
+    parser.add_argument(
+        '--rank-weight', action='store_true',
+        help='啟用排名加權 sizing (預設停用; 實測顯示對動量策略有害)'
+    )
+    parser.add_argument(
+        '--regime-delev', action='store_true',
+        help='啟用 Regime 降曝險 (預設停用; 實測顯示會錯過反彈)'
+    )
 
     return parser.parse_args()
 
@@ -1230,7 +1242,7 @@ def main():
     trailing_str = f" +Trailing({args.trailing_atr}×ATR)" if args.trailing else ""
 
     print("=" * 60)
-    print("🎯 AI 台股量化交易系統 v2.0")
+    print("🎯 AI 台股量化交易系統 v7.0")
     print("=" * 60)
     print(f"   股池: {mode_str}")
     print(f"   TP/SL: {tp_sl_str}{trailing_str}  Top-K: {args.top_k}  持倉上限: {args.hold_days} 天")
@@ -1291,6 +1303,9 @@ def main():
         consec_loss_pause=args.consec_loss_pause,
         sector_max_pct=args.sector_max_pct,
         corr_filter=args.corr_filter,
+        max_portfolio_heat=args.max_heat,
+        rank_weighted=args.rank_weight,
+        regime_deleverage=args.regime_delev,
         buy_cost=args.buy_cost,
         sell_cost=args.sell_cost,
     )

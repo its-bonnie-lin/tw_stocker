@@ -70,14 +70,23 @@ def simulate_equity(returns, initial=1_000_000, position_size=0.10):
     return total_return, max_dd, equity
 
 
-def run_mc(returns, n_runs, label=""):
+def run_mc(returns, n_runs, label="", block_size=1):
     """Run Monte Carlo and return stats dict."""
     n = len(returns)
     all_returns = []
     all_mdds = []
 
     for _ in range(n_runs):
-        sample = random.choices(returns, k=n)
+        if block_size <= 1:
+            # iid bootstrap (legacy)
+            sample = random.choices(returns, k=n)
+        else:
+            # Block bootstrap: 保留時序結構
+            sample = []
+            while len(sample) < n:
+                start = random.randint(0, max(0, n - block_size))
+                sample.extend(returns[start:start + block_size])
+            sample = sample[:n]
         ret, mdd, _ = simulate_equity(sample)
         all_returns.append(ret)
         all_mdds.append(mdd)
@@ -97,9 +106,10 @@ def run_mc(returns, n_runs, label=""):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Monte Carlo 壓力測試 v2')
+    parser = argparse.ArgumentParser(description='Monte Carlo 壓力測試 v3 (block bootstrap)')
     parser.add_argument('--runs', type=int, default=2000, help='模擬次數 (預設 2000)')
     parser.add_argument('--confidence', type=int, default=95, help='信心區間 (預設 95)')
+    parser.add_argument('--block-size', type=int, default=5, help='Block bootstrap 區塊大小 (預設 5 = 一週; 1 = iid)')
     args = parser.parse_args()
 
     trades = get_trades()
@@ -110,9 +120,10 @@ def main():
         print(f"⚠️ 交易筆數 {n_trades} 太少")
         sys.exit(1)
 
-    print(f"\n📊 Monte Carlo 壓力測試 v2 — {datetime.now().strftime('%Y-%m-%d')}")
+    print(f"\n📊 Monte Carlo 壓力測試 v3 — {datetime.now().strftime('%Y-%m-%d')}")
     print(f"   交易筆數: {n_trades}")
     print(f"   模擬次數: {args.runs}")
+    print(f"   Block size: {args.block_size} ({'iid' if args.block_size <= 1 else f'{args.block_size}日區塊'})") 
 
     # 原始序列
     orig_ret, orig_mdd, _ = simulate_equity(returns)
@@ -120,7 +131,7 @@ def main():
 
     # === 全體 Monte Carlo ===
     print(f"\n🎲 全體交易 Monte Carlo ({n_trades} 筆)...")
-    all_stats = run_mc(returns, args.runs, "全體")
+    all_stats = run_mc(returns, args.runs, "全體", block_size=args.block_size)
 
     # === Regime 分割 ===
     # 用交易結果分：正報酬 vs 負報酬（模擬多頭/空頭 regime）
@@ -146,12 +157,12 @@ def main():
     bear_stats = None
     if len(loss_trades) >= 20:
         print(f"\n🐻 熊市壓力測試 (僅虧損交易 {len(loss_trades)} 筆)...")
-        bear_stats = run_mc(loss_trades, args.runs, "熊市")
+        bear_stats = run_mc(loss_trades, args.runs, "熊市", block_size=max(1, args.block_size // 2))
 
     # === 保守情境：50% 獲利 + 50% 虧損（降低勝率）===
     mixed = loss_trades + random.choices(win_trades, k=len(loss_trades))
     print(f"\n⚖️ 保守情境 (勝率降至 50%, {len(mixed)} 筆)...")
-    conservative_stats = run_mc(mixed, args.runs, "保守")
+    conservative_stats = run_mc(mixed, args.runs, "保守", block_size=args.block_size)
 
     # === 輸出報告 ===
     tail = (100 - args.confidence) / 100
