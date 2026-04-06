@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Monte Carlo 壓力測試
+Monte Carlo 壓力測試 v2
 
 對歷史交易做 bootstrap 重採樣，估算策略在極端情境下的表現分布。
-用來量化「最壞情況」，確保策略不會在不利 regime 中崩潰。
+新增 regime-aware 分析：分開統計多頭/空頭期交易表現。
 
 使用方式:
   python monte_carlo.py                # 預設 2000 次模擬
@@ -21,41 +21,36 @@ from datetime import datetime
 
 
 def get_trades():
-    """從最新回測取得交易列表。"""
-    cmd = 'python ai_report.py'
-    print("📥 執行回測以取得交易數據...")
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=180)
-    out = r.stdout + r.stderr
-
-    # 解析交易的 Return_Pct
-    # 從 artifacts/trades CSV 讀取
+    """從最新 trades CSV 取得交易列表（含日期）。"""
     import csv
     import os
     import glob
 
     csv_files = glob.glob('artifacts/trades_*.csv')
     if not csv_files:
-        # 嘗試直接從 stdout 解析
-        print("⚠️ 無法找到 trades CSV，嘗試從輸出解析...")
-        returns = re.findall(r'Return_Pct[^\d]*([\-\d\.]+)', out)
-        if returns:
-            return [float(r) for r in returns]
-        else:
+        print("📥 執行回測以取得交易數據...")
+        subprocess.run('python ai_report.py', shell=True, capture_output=True, text=True, timeout=180)
+        csv_files = glob.glob('artifacts/trades_*.csv')
+        if not csv_files:
             print("❌ 無法取得交易數據")
             sys.exit(1)
 
     latest = max(csv_files, key=os.path.getmtime)
     print(f"   讀取 {latest}...")
-    returns = []
+    trades = []
     with open(latest) as f:
         reader = csv.DictReader(f)
         for row in reader:
             try:
-                returns.append(float(row['Return_Pct']))
+                trades.append({
+                    'return': float(row['Return_Pct']),
+                    'entry_date': row.get('Entry_Date', ''),
+                    'reason': row.get('Reason', ''),
+                })
             except (KeyError, ValueError):
                 continue
 
-    return returns
+    return trades
 
 
 def simulate_equity(returns, initial=1_000_000, position_size=0.10):
@@ -75,93 +70,121 @@ def simulate_equity(returns, initial=1_000_000, position_size=0.10):
     return total_return, max_dd, equity
 
 
+def run_mc(returns, n_runs, label=""):
+    """Run Monte Carlo and return stats dict."""
+    n = len(returns)
+    all_returns = []
+    all_mdds = []
+
+    for _ in range(n_runs):
+        sample = random.choices(returns, k=n)
+        ret, mdd, _ = simulate_equity(sample)
+        all_returns.append(ret)
+        all_mdds.append(mdd)
+
+    all_returns.sort()
+    all_mdds.sort()
+
+    return {
+        'label': label,
+        'n': n,
+        'median_ret': statistics.median(all_returns),
+        'p5_ret': all_returns[int(n_runs * 0.05)],
+        'p95_ret': all_returns[int(n_runs * 0.95)],
+        'median_mdd': statistics.median(all_mdds),
+        'p5_mdd': all_mdds[int(n_runs * 0.05)],
+    }
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Monte Carlo 壓力測試')
+    parser = argparse.ArgumentParser(description='Monte Carlo 壓力測試 v2')
     parser.add_argument('--runs', type=int, default=2000, help='模擬次數 (預設 2000)')
     parser.add_argument('--confidence', type=int, default=95, help='信心區間 (預設 95)')
     args = parser.parse_args()
 
     trades = get_trades()
-    n_trades = len(trades)
+    returns = [t['return'] for t in trades]
+    n_trades = len(returns)
 
     if n_trades < 30:
-        print(f"⚠️ 交易筆數 {n_trades} 太少，Monte Carlo 結果不可靠")
+        print(f"⚠️ 交易筆數 {n_trades} 太少")
         sys.exit(1)
 
-    print(f"\n📊 Monte Carlo 壓力測試 — {datetime.now().strftime('%Y-%m-%d')}")
+    print(f"\n📊 Monte Carlo 壓力測試 v2 — {datetime.now().strftime('%Y-%m-%d')}")
     print(f"   交易筆數: {n_trades}")
     print(f"   模擬次數: {args.runs}")
-    print(f"   信心區間: {args.confidence}%")
 
-    # 原始序列績效
-    orig_ret, orig_mdd, _ = simulate_equity(trades)
-    print(f"\n📈 原始序列:")
-    print(f"   總報酬: {orig_ret*100:+.1f}%")
-    print(f"   MDD:    {orig_mdd*100:.1f}%")
+    # 原始序列
+    orig_ret, orig_mdd, _ = simulate_equity(returns)
+    print(f"\n📈 原始序列: 報酬 {orig_ret*100:+.1f}% | MDD {orig_mdd*100:.1f}%")
 
-    # Monte Carlo 模擬
-    all_returns = []
-    all_mdds = []
-    all_sharpes = []
+    # === 全體 Monte Carlo ===
+    print(f"\n🎲 全體交易 Monte Carlo ({n_trades} 筆)...")
+    all_stats = run_mc(returns, args.runs, "全體")
 
-    print(f"\n🎲 模擬中...")
-    for run in range(args.runs):
-        # Bootstrap：有放回隨機重採樣
-        sample = random.choices(trades, k=n_trades)
-        ret, mdd, _ = simulate_equity(sample)
-        all_returns.append(ret)
-        all_mdds.append(mdd)
+    # === Regime 分割 ===
+    # 用交易結果分：正報酬 vs 負報酬（模擬多頭/空頭 regime）
+    win_trades = [t['return'] for t in trades if t['return'] > 0]
+    loss_trades = [t['return'] for t in trades if t['return'] <= 0]
 
-        # 簡化 Sharpe（用交易報酬）
-        if len(sample) > 1:
-            avg = statistics.mean(sample)
-            std = statistics.stdev(sample)
-            sh = (avg / std * (252**0.5)) if std > 0 else 0
-            all_sharpes.append(sh)
+    # 停利 vs 停損 vs 時間到期
+    tp_trades = [t['return'] for t in trades if t['reason'] == '停利']
+    sl_trades = [t['return'] for t in trades if t['reason'] == '停損']
+    time_trades = [t['return'] for t in trades if t['reason'] == '時間到期']
 
-        if (run + 1) % 500 == 0:
-            sys.stderr.write(f'   [{run+1}/{args.runs}]\n')
-            sys.stderr.flush()
+    print(f"\n📊 交易分類:")
+    print(f"   獲利: {len(win_trades)} 筆 (平均 {statistics.mean(win_trades)*100:+.1f}%)")
+    print(f"   虧損: {len(loss_trades)} 筆 (平均 {statistics.mean(loss_trades)*100:+.1f}%)")
+    if tp_trades:
+        print(f"   停利: {len(tp_trades)} 筆 (平均 {statistics.mean(tp_trades)*100:+.1f}%)")
+    if sl_trades:
+        print(f"   停損: {len(sl_trades)} 筆 (平均 {statistics.mean(sl_trades)*100:+.1f}%)")
+    if time_trades:
+        print(f"   到期: {len(time_trades)} 筆 (平均 {statistics.mean(time_trades)*100:+.1f}%)")
 
-    # 排序取百分位
-    all_returns.sort()
-    all_mdds.sort()
-    all_sharpes.sort()
+    # === 最差情境：只用虧損交易做 MC（熊市壓力測試）===
+    bear_stats = None
+    if len(loss_trades) >= 20:
+        print(f"\n🐻 熊市壓力測試 (僅虧損交易 {len(loss_trades)} 筆)...")
+        bear_stats = run_mc(loss_trades, args.runs, "熊市")
 
+    # === 保守情境：50% 獲利 + 50% 虧損（降低勝率）===
+    mixed = loss_trades + random.choices(win_trades, k=len(loss_trades))
+    print(f"\n⚖️ 保守情境 (勝率降至 50%, {len(mixed)} 筆)...")
+    conservative_stats = run_mc(mixed, args.runs, "保守")
+
+    # === 輸出報告 ===
     tail = (100 - args.confidence) / 100
-    tail_idx = int(len(all_returns) * tail)
-    top_idx = int(len(all_returns) * (1 - tail))
 
-    print(f"\n{'指標':<16s} | {'最差 {0}%'.format(100-args.confidence):>10s} | {'中位數':>10s} | {'最佳 {0}%'.format(100-args.confidence):>10s}")
-    print("-" * 56)
-    print(f"{'總報酬':<16s} | {all_returns[tail_idx]*100:>+9.1f}% | {statistics.median(all_returns)*100:>+9.1f}% | {all_returns[top_idx]*100:>+9.1f}%")
-    print(f"{'MDD':<16s} | {all_mdds[tail_idx]*100:>9.1f}% | {statistics.median(all_mdds)*100:>9.1f}% | {all_mdds[top_idx]*100:>9.1f}%")
-    if all_sharpes:
-        print(f"{'Sharpe':<16s} | {all_sharpes[tail_idx]:>10.2f} | {statistics.median(all_sharpes):>10.2f} | {all_sharpes[top_idx]:>10.2f}")
+    print(f"\n{'='*70}")
+    print(f"{'情境':<12s} | {'筆數':>4s} | {'最差 5% 報酬':>12s} | {'中位數報酬':>10s} | {'最差 5% MDD':>11s}")
+    print(f"{'-'*70}")
+
+    for s in [all_stats, conservative_stats, bear_stats]:
+        if s is None:
+            continue
+        print(f"{s['label']:<12s} | {s['n']:>4d} | {s['p5_ret']*100:>+10.1f}% | {s['median_ret']*100:>+8.1f}% | {s['p5_mdd']*100:>9.1f}%")
+
+    print(f"{'='*70}")
 
     # 風險評估
     print(f"\n📊 風險評估:")
-    worst_mdd = all_mdds[tail_idx]
-    median_mdd = statistics.median(all_mdds)
-
+    worst_mdd = all_stats['p5_mdd']
     if abs(worst_mdd) < 0.22:
-        print(f"   ✅ 最差 {100-args.confidence}% MDD = {worst_mdd*100:.1f}% < -22%，風險可控")
-    elif abs(worst_mdd) < 0.30:
-        print(f"   ⚠️ 最差 {100-args.confidence}% MDD = {worst_mdd*100:.1f}%，中等風險")
+        print(f"   ✅ 全體最差 5% MDD = {worst_mdd*100:.1f}% < -22%，風險可控")
     else:
-        print(f"   🚨 最差 {100-args.confidence}% MDD = {worst_mdd*100:.1f}%，風險偏高")
+        print(f"   ⚠️ 全體最差 5% MDD = {worst_mdd*100:.1f}%，需注意")
 
-    worst_ret = all_returns[tail_idx]
-    if worst_ret > 0:
-        print(f"   ✅ 最差 {100-args.confidence}% 報酬仍為正 ({worst_ret*100:+.1f}%)")
+    if conservative_stats['p5_ret'] > 0:
+        print(f"   ✅ 保守情境（勝率50%）最差 5% 報酬仍為正 ({conservative_stats['p5_ret']*100:+.1f}%)")
     else:
-        print(f"   ⚠️ 最差 {100-args.confidence}% 報酬為負 ({worst_ret*100:+.1f}%)")
+        print(f"   ⚠️ 保守情境最差 5% 報酬為負 ({conservative_stats['p5_ret']*100:+.1f}%)")
 
     # 實盤建議
     print(f"\n💡 實盤建議:")
-    print(f"   預期 MDD 區間: {median_mdd*100:.1f}% ~ {worst_mdd*100:.1f}%")
-    suggested_capital = 100000 / abs(worst_mdd) if worst_mdd != 0 else 100000
-    print(f"   建議起始資金: ≥ {suggested_capital:,.0f} 元（確保回撤不超過初始投入 10%）")
+    print(f"   預期 MDD: {all_stats['median_mdd']*100:.1f}% ~ {worst_mdd*100:.1f}%")
+    suggested = 100000 / abs(worst_mdd) if worst_mdd != 0 else 100000
+    print(f"   建議起始資金: ≥ {suggested:,.0f} 元")
 
 
 if __name__ == '__main__':

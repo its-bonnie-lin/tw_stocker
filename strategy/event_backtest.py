@@ -82,6 +82,8 @@ class EventDrivenBacktester:
         連續停損筆數上限（預設 3），過此則暫停 consec_loss_pause 天
     consec_loss_pause : int
         連續停損後暫停天數（預設 5）
+    sector_max_pct : float
+        單一板塊最大持倉比例（預設 0.6 = 60%），電子股不超過此比例
     buy_cost : float
         買進手續費率（預設 0.001425 = 0.1425%）
     sell_cost : float
@@ -100,6 +102,7 @@ class EventDrivenBacktester:
                  futures_hedge=False,
                  dd_pause_pct=0.10, dd_pause_days=5,
                  consec_loss_limit=3, consec_loss_pause=5,
+                 sector_max_pct=0.6,
                  buy_cost=0.001425, sell_cost=0.004425):
         self.tp_pct = tp_pct
         self.sl_pct = sl_pct
@@ -126,6 +129,7 @@ class EventDrivenBacktester:
         self.dd_pause_days = dd_pause_days
         self.consec_loss_limit = consec_loss_limit
         self.consec_loss_pause = consec_loss_pause
+        self.sector_max_pct = sector_max_pct
         self.buy_cost = buy_cost
         self.sell_cost = sell_cost
 
@@ -502,9 +506,30 @@ class EventDrivenBacktester:
                     except Exception:
                         pass
 
-                # Top-K 選股：按分數排序，取前 top_k 名
+                # Top-K 選股：按分數排序，取前 top_k 名（含板塊分散）
                 candidates.sort(key=lambda x: x[1], reverse=True)
                 slots_available = max_positions - len(active_trades)
+
+                # 板塊分散：電子股不超過 sector_max_pct
+                if self.sector_max_pct < 1.0:
+                    # 台股電子股代碼前綴: 23xx,24xx,30xx,33xx,34xx,35xx,36xx,37xx,49xx,61xx,63xx,64xx,65xx,66xx,67xx,68xx,69xx
+                    elec_prefixes = ('23','24','30','33','34','35','36','37',
+                                     '49','61','63','64','65','66','67','68','69')
+                    # 當前持倉中的電子股數
+                    active_elec = sum(1 for t in active_trades if t.startswith(elec_prefixes))
+                    max_elec_total = max(1, int(max_positions * self.sector_max_pct))
+
+                    filtered_candidates = []
+                    new_elec = 0
+                    for c in candidates:
+                        is_elec = c[0].startswith(elec_prefixes)
+                        if is_elec and (active_elec + new_elec) >= max_elec_total:
+                            continue  # 電子股已滿，跳過
+                        filtered_candidates.append(c)
+                        if is_elec:
+                            new_elec += 1
+                    candidates = filtered_candidates
+
                 selected = candidates[:min(top_k, slots_available)]
 
                 for ticker, score, entry_price in selected:
