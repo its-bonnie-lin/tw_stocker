@@ -1393,7 +1393,7 @@ def parse_args():
         help='啟用趨勢品質：slope + 均線排列 + 過熱抑制'
     )
     parser.add_argument(
-        '--gap-aware-sizing', action='store_true',
+        '--gap-aware-sizing', action='store_true', default=True,
         help='啟用 Gap-aware sizing：跳空越大，進場倉位越小'
     )
     parser.add_argument(

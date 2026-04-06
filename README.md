@@ -5,16 +5,16 @@
 
 📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
 
-## 績效總覽（v8.2 final — 無 lookahead + graduated regime + sector cap）
+## 績效總覽（v8.3 — 無 lookahead + graduated regime + sector cap + gap-aware）
 
 | 指標 | 值 | 說明 |
 |------|:---:|------|
-| **Sharpe** | **2.30** | 無 lookahead + 10bps 滑價 + graduated regime + sector 60% |
-| **年化報酬** | **+62.7%** | 包含交易成本 + 滑價 |
-| **MDD** | **-16.9%** | 四段式曝險 + 板塊分散控管左尾 |
-| **Calmar** | **3.72** | 年化報酬/MDD |
-| **Profit Factor** | **1.82** | 總獲利/總虧損 |
-| **勝率** | **57.4%** | 507 筆交易 |
+| **Sharpe** | **2.33** | 無 lookahead + 10bps 滑價 + graduated regime + sector 60% + gap-aware |
+| **年化報酬** | **+57.8%** | 包含交易成本 + 滑價 |
+| **MDD** | **-15.7%** | 四段式曝險 + 板塊分散 + 跳空減倉控管左尾 |
+| **Calmar** | **3.68** | 年化報酬/MDD |
+| **Profit Factor** | **1.87** | 總獲利/總虧損 |
+| **勝率** | **57.4%** | 505 筆交易 |
 
 ### 演化歷程
 
@@ -23,10 +23,11 @@
 | v7 (lookahead) | 2.96 | +91% | -18% | 4.96 | ⚠️ 含 lookahead bias |
 | v8.1 (honest) | 1.95 | +61% | -30% | 2.02 | ✅ 修正 lookahead |
 | v8.2 (graduated) | 2.21 | +64% | -19% | 3.39 | ✅ + graduated regime |
-| **v8.2 (final)** | **2.30** | **+63%** | **-17%** | **3.72** | ✅ + sector cap 60% |
+| v8.2 (sector cap) | 2.30 | +63% | -17% | 3.72 | ✅ + sector cap 60% |
+| **v8.3 (gap-aware)** | **2.33** | **+58%** | **-16%** | **3.68** | ✅ + gap-aware sizing |
 
-> v7→v8.1：修正 regime filter 和 volume confirm 的 lookahead bias。
-> v8.1→v8.2：四段式曝險 + Universe 60 + Top-7 + 板塊分散 60%。
+> v7→v8.1：修正 lookahead bias。v8.1→v8.2：graduated regime + univ-60 + top-7 + sector 60%。
+> v8.2→v8.3：gap-aware sizing（跳空越大，進場倉位越小）。
 
 ### Monte Carlo 壓力測試（Block Bootstrap, 2000x, v8.2 honest）
 
@@ -53,6 +54,12 @@ Graduated Regime (v8.2):
   - 大盤 > 60MA + < 20MA →  70% 曝險（轉弱）
   - 大盤 < 60MA + > 20MA →  40% 曝險（轉強）
   - 大盤 < 60MA + < 20MA →   0% 停止進場
+
+Gap-aware Entry Sizing (v8.3):
+  - gap < 0.5 ATR → 100% 倉位
+  - 0.5~1.0 ATR  →  75% 倉位（中跳空減倉）
+  - 1.0~1.5 ATR  →  50% 倉位（大跳空半倉）
+  - gap ≥ 1.5 ATR → 跳過（情緒極值）
 
 出場 (gap-aware):
   - 停損: min(stop_price, open)  ← 隔夜跳空用開盤價
