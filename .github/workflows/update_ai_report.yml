@@ -1,4 +1,4 @@
-name: AI Quant Trading Report v2.1
+name: AI Quant Trading Report v5.0
 
 on:
   schedule:
@@ -6,10 +6,6 @@ on:
     - cron: '0 9 * * 1-5'
   workflow_dispatch:
     inputs:
-      tp_sl_mode:
-        description: 'TP/SL 模式: atr 或 fixed'
-        required: false
-        default: 'atr'
       tp_atr:
         description: 'ATR 停利倍數'
         required: false
@@ -26,20 +22,12 @@ on:
         description: '每日最多進場股票數'
         required: false
         default: '5'
-      universe_size:
-        description: '動態 Universe 大小'
-        required: false
-        default: '50'
-      regime_filter:
-        description: '啟用大盤過濾 (0050 > 60MA)'
-        required: false
-        default: 'true'
       days:
         description: '回測天數'
         required: false
         default: '1200'
       gap_filter:
-        description: '跳空過濾 ATR 倍數 (0=停用)'
+        description: '跳空過濾 ATR 倍數'
         required: false
         default: '1.5'
 
@@ -56,53 +44,78 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run AI Quant Pipeline v5.0
         run: |
-          pip install -r requirements.txt
-
-      - name: Run AI Quant Pipeline v2.1
-        run: |
-          TP_SL_MODE=${{ github.event.inputs.tp_sl_mode || 'atr' }}
-          TP_ATR=${{ github.event.inputs.tp_atr || '3.0' }}
-          SL_ATR=${{ github.event.inputs.sl_atr || '2.0' }}
-          HOLD=${{ github.event.inputs.hold_days || '30' }}
-          TOP_K=${{ github.event.inputs.top_k || '5' }}
-          UNIV=${{ github.event.inputs.universe_size || '50' }}
-          DAYS=${{ github.event.inputs.days || '1200' }}
-          REGIME=${{ github.event.inputs.regime_filter || 'true' }}
-          GAP=${{ github.event.inputs.gap_filter || '1.5' }}
-
-          REGIME_FLAG=""
-          if [ "$REGIME" = "true" ]; then
-            REGIME_FLAG="--regime-filter"
-          fi
-
-          GAP_FLAG=""
-          if [ "$GAP" != "0" ]; then
-            GAP_FLAG="--gap-filter $GAP"
-          fi
-
           python ai_report.py \
-            --tp-sl-mode $TP_SL_MODE \
-            --tp-atr $TP_ATR \
-            --sl-atr $SL_ATR \
-            --hold-days $HOLD \
-            --top-k $TOP_K \
-            --universe-size $UNIV \
-            --days $DAYS \
-            $REGIME_FLAG \
-            $GAP_FLAG
+            --regime-filter \
+            --tp-atr ${{ github.event.inputs.tp_atr || '4.0' }} \
+            --sl-atr ${{ github.event.inputs.sl_atr || '3.0' }} \
+            --hold-days ${{ github.event.inputs.hold_days || '20' }} \
+            --top-k ${{ github.event.inputs.top_k || '5' }} \
+            --gap-filter ${{ github.event.inputs.gap_filter || '1.5' }} \
+            --days ${{ github.event.inputs.days || '1200' }}
 
       - name: Cleanup old artifacts (keep last 180 days)
         run: |
           if [ -d "artifacts" ]; then
             find artifacts/ -type f -mtime +180 -delete 2>/dev/null || true
-            echo "🧹 Cleaned artifacts older than 180 days"
           fi
 
-      - name: Commit and push (preserve history)
+      - name: Commit and push
         run: |
           git config --global user.email "voidful.stack@gmail.com"
           git config --global user.name "Voidful"
           git add -A
-          git commit -m "📊 AI Trading Report v2.1 ($(date -u '+%Y-%m-%d'))" || echo "No changes to commit"
+          git commit -m "📊 AI Report v5.0 ($(date -u '+%Y-%m-%d'))" || echo "No changes"
+          git push origin main
+
+  # 每季第一週自動跑 sweep + Monte Carlo + Walk-Forward
+  quarterly-health-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Check if quarterly (first week of Jan/Apr/Jul/Oct)
+        id: check
+        run: |
+          DAY=$(date -u '+%d')
+          MONTH=$(date -u '+%m')
+          if [ "$DAY" -le 7 ] && ([ "$MONTH" = "01" ] || [ "$MONTH" = "04" ] || [ "$MONTH" = "07" ] || [ "$MONTH" = "10" ]); then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        if: steps.check.outputs.run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Quick Sweep
+        if: steps.check.outputs.run == 'true'
+        run: python sweep.py --quick --output csv
+
+      - name: Walk-Forward Validation
+        if: steps.check.outputs.run == 'true'
+        run: python walk_forward.py
+
+      - name: Monte Carlo Stress Test
+        if: steps.check.outputs.run == 'true'
+        run: python monte_carlo.py --runs 2000
+
+      - name: Upload quarterly report
+        if: steps.check.outputs.run == 'true'
+        run: |
+          git config --global user.email "voidful.stack@gmail.com"
+          git config --global user.name "Voidful"
+          git add -A
+          git commit -m "🔄 Quarterly health check ($(date -u '+%Y-%m-%d'))" || echo "No changes"
           git push origin main

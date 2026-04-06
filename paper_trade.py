@@ -213,6 +213,21 @@ def generate_report(args):
         else:
             print("   🚨 滑價過大，需檢查執行流程")
 
+        # 執行偏差自動警報
+        if execution_rate < 85 or abs(avg_slip) > 0.2:
+            msg = (f"⚠️ 執行偏差警報\n"
+                   f"執行率: {execution_rate:.1f}%\n"
+                   f"平均滑價: {avg_slip:+.3f}%\n"
+                   f"建議檢查掛單策略")
+            print(f"\n{msg}")
+            send_telegram(msg)
+    else:
+        # 無滑價數據但有信號
+        if execution_rate < 85:
+            msg = f"⚠️ 執行率偏低: {execution_rate:.1f}%，建議檢查掛單流程"
+            print(f"\n{msg}")
+            send_telegram(msg)
+
 
 def check_alert(args):
     """風險警報：檢查當前回撤是否超過門檻。"""
