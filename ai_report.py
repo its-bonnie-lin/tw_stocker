@@ -1417,6 +1417,10 @@ def parse_args():
         help='流動性穩定度模式：raw=全局, sector=行業中性, demeaned=殘差 (預設 raw)'
     )
     parser.add_argument(
+        '--cluster-penalty', action='store_true',
+        help='啟用 Cluster Penalty：根據候選與持倉的相關性 soft-penalize 分數'
+    )
+    parser.add_argument(
         '--show-inst', action='store_true', default=True,
         help='在報表信號中顯示三大法人籌碼與新聞情緒標注 (預設開啟)'
     )
@@ -1536,6 +1540,7 @@ def main():
         theme_breadth=args.theme_breadth,
         dynamic_sector_cap=args.dynamic_sector_cap,
         gap_aware_sizing=args.gap_aware_sizing,
+        cluster_penalty=args.cluster_penalty,
         buy_cost=args.buy_cost,
         sell_cost=args.sell_cost,
     )

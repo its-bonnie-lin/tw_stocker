@@ -115,6 +115,7 @@ class EventDrivenBacktester:
                  theme_breadth=False,
                  dynamic_sector_cap=False,
                  gap_aware_sizing=False,
+                 cluster_penalty=False,
                  buy_cost=0.001425, sell_cost=0.004425):
         self.tp_pct = tp_pct
         self.sl_pct = sl_pct
@@ -154,6 +155,7 @@ class EventDrivenBacktester:
         self.theme_breadth = theme_breadth
         self.dynamic_sector_cap = dynamic_sector_cap
         self.gap_aware_sizing = gap_aware_sizing
+        self.cluster_penalty = cluster_penalty
         self.buy_cost = buy_cost
         self.sell_cost = sell_cost
 
@@ -718,6 +720,38 @@ class EventDrivenBacktester:
                         # 只選分數 >= top_score * 0.6 的候選
                         quality_count = sum(1 for s in scores if s >= top_score * 0.6)
                         effective_top_k = max(2, min(top_k, quality_count))
+
+                # === Cluster-Penalized Selection ===
+                # 對候選股分數做 correlation-based soft penalty
+                if self.cluster_penalty and len(candidates) >= 3 and i >= 22:
+                    try:
+                        lookback = min(20, i)
+                        cand_tickers = [c[0] for c in candidates[:min(15, len(candidates))]]
+                        held_tickers = list(active_trades.keys())
+                        all_tickers = list(set(cand_tickers + held_tickers))
+                        valid_tickers = [t for t in all_tickers if t in close_df.columns]
+
+                        if len(valid_tickers) >= 3 and lookback >= 10:
+                            ret_slice = close_df[valid_tickers].iloc[max(0, i-lookback):i].pct_change().dropna()
+                            if len(ret_slice) >= 5:
+                                corr_mat = ret_slice.corr()
+                                penalized = []
+                                already_in = set(held_tickers)
+                                for ticker, score, ep in candidates:
+                                    if ticker in corr_mat.index and len(already_in) > 0:
+                                        valid_peers = [t for t in already_in
+                                                       if t in corr_mat.columns and t != ticker]
+                                        if valid_peers:
+                                            avg_corr = corr_mat.loc[ticker, valid_peers].mean()
+                                            if avg_corr > 0.7:
+                                                score = score * 0.7
+                                            elif avg_corr > 0.5:
+                                                score = score * 0.85
+                                    penalized.append((ticker, score, ep))
+                                    already_in.add(ticker)
+                                candidates = sorted(penalized, key=lambda x: x[1], reverse=True)
+                    except Exception:
+                        pass
 
                 selected = candidates[:min(effective_top_k, slots_available)]
 

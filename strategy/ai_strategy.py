@@ -1,22 +1,15 @@
 """
-AI 多維度 Rank 橫向排名策略 (AI Ensemble Cross-Sectional Ranking) — v2
+AI 多維度 Rank 橫向排名策略 (AI Ensemble Cross-Sectional Ranking) — v8.3
 
-核心設計理念 — 奧坎剃刀原則：
-用四個「相對弱指標」的橫向百分位排名加總（滿分 4.0），
-取代單一絕對門檻值的傳統技術指標，讓系統動態適應全天候市場。
+Production scoring: rank_momentum × 3 + rank_trend × 1
+(可選: + rank_liq × 0.3 when liq_stability=True)
 
-v2 改進：
-- 新增 open_df 供 t+1 open 進場
-- 新增 ATR 計算供波動度自適應 TP/SL 與 position sizing
-- 新增 dynamic liquid universe 支援全 TWSE 動態排名
-- 橫向排名改為 universe-masked（只在當日 liquid universe 中排序）
-
-四維度指標：
-1. 20 日動能 (Momentum)  — 過去 20 天的價格漲幅
-2. 60MA 乖離率 (Trend Bias) — 價格偏離 60 日均線程度
-3. 5/20 日量能比 (Volume Surge) — 短期量能放大倍率
-4. 20 日波動率倒數 (Stability) — 越穩定排名越高
+已驗證無效 (Phase 1-4, 43 configs):
+- ml_weights, residual_momentum, trend_quality: 有害
+- breakeven, trailing, confidence-k, mid-hold-review: 有害或零效果
 """
+
+STRATEGY_VERSION = "v8.3"
 
 import yfinance as yf
 import pandas as pd
@@ -275,6 +268,11 @@ def engineer_features(close_df, vol_df, universe_mask=None,
 
     # === 因子加權 ===
     if ml_weights:
+        # NOTE: ml_weights 已驗證無效 (Sharpe -55%), 保留但加警告
+        import warnings as _w
+        _w.warn('ml_weights 已驗證無效 (Sharpe -55%), 不建議使用', stacklevel=2)
+        rank_vol = _rank(vol_surge)
+        rank_stab = _rank(stability)
         total_score = _ml_factor_score(
             close_df, rank_mom, rank_trend, rank_vol, rank_stab, universe_mask
         )
