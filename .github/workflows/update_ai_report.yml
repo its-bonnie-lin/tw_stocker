@@ -1,4 +1,4 @@
-name: AI Quant Trading Report v5.0
+name: AI Quant Trading Report v7.0
 
 on:
   schedule:
@@ -31,12 +31,19 @@ on:
         required: false
         default: '1.5'
 
+# 防止多個 run 同時 push 造成 race condition
+concurrency:
+  group: ai-report-main
+  cancel-in-progress: false
+
 jobs:
   generate-report:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # 完整 history，避免 rebase 問題
 
       - uses: actions/setup-python@v6
         with:
@@ -46,7 +53,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run AI Quant Pipeline v5.0
+      - name: Run AI Quant Pipeline v7.0
         run: |
           python ai_report.py \
             --regime-filter \
@@ -67,9 +74,14 @@ jobs:
         run: |
           git config --global user.email "voidful.stack@gmail.com"
           git config --global user.name "Voidful"
+
+          # Rebase onto latest remote to prevent non-fast-forward rejection
+          git fetch origin main
+          git rebase origin/main
+
           git add -A
-          git commit -m "📊 AI Report v5.0 ($(date -u '+%Y-%m-%d'))" || echo "No changes"
-          git push origin main
+          git commit -m "📊 AI Report v7.0 ($(date -u '+%Y-%m-%d'))" || echo "No changes"
+          git push origin HEAD:main
 
   # 每季第一週自動跑 sweep + Monte Carlo + Walk-Forward
   quarterly-health-check:
@@ -78,6 +90,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
@@ -107,15 +121,20 @@ jobs:
         if: steps.check.outputs.run == 'true'
         run: python walk_forward.py
 
-      - name: Monte Carlo Stress Test
+      - name: Monte Carlo Stress Test (Block Bootstrap)
         if: steps.check.outputs.run == 'true'
-        run: python monte_carlo.py --runs 2000
+        run: python monte_carlo.py --runs 2000 --block-size 5
 
       - name: Upload quarterly report
         if: steps.check.outputs.run == 'true'
         run: |
           git config --global user.email "voidful.stack@gmail.com"
           git config --global user.name "Voidful"
+
+          # Rebase onto latest remote to prevent non-fast-forward rejection
+          git fetch origin main
+          git rebase origin/main
+
           git add -A
           git commit -m "🔄 Quarterly health check ($(date -u '+%Y-%m-%d'))" || echo "No changes"
-          git push origin main
+          git push origin HEAD:main
