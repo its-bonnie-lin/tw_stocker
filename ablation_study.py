@@ -83,8 +83,9 @@ def compute_factor_scores(close_df, vol_df, factors, universe_mask=None):
 
 
 def run_single_ablation(label, factors, close_df, open_df, high_df, low_df, vol_df,
-                        universe_mask, hold_days, initial_capital, top_k, threshold):
-    """跑一組 ablation 並回傳績效指標。"""
+                        universe_mask, hold_days, initial_capital, top_k, threshold,
+                        market_close=None):
+    """跑一組 ablation 並回傳績效指標（對齊 README 主配置）。"""
     print(f"\n--- Ablation: {label} ({', '.join(factors) if factors else 'NONE'}) ---")
 
     total_score, ma_60, atr_df = compute_factor_scores(close_df, vol_df, factors, universe_mask)
@@ -93,6 +94,7 @@ def run_single_ablation(label, factors, close_df, open_df, high_df, low_df, vol_
     # 原始滿分 4.0 對應 threshold 2.0 → 比例 = 0.5
     adjusted_threshold = len(factors) * 0.5 if factors else 0
 
+    # ━━ 對齊 README 主配置（v8 honest baseline） ━━
     backtester = EventDrivenBacktester(
         tp_pct=0.15,
         sl_pct=0.08,
@@ -100,8 +102,11 @@ def run_single_ablation(label, factors, close_df, open_df, high_df, low_df, vol_
         initial_capital=initial_capital,
         position_size=0.10,
         tp_sl_mode='atr',
-        tp_atr_mult=3.0,
-        sl_atr_mult=1.5,
+        tp_atr_mult=4.0,         # README: 4.0
+        sl_atr_mult=3.0,         # README: 3.0
+        gap_filter_atr=1.5,      # README: 1.5
+        regime_filter=True,      # README: --regime-filter
+        slippage=0.001,          # v7: 10bps
         buy_cost=0.001425,
         sell_cost=0.004425,
     )
@@ -110,6 +115,7 @@ def run_single_ablation(label, factors, close_df, open_df, high_df, low_df, vol_
         total_score, close_df, open_df, high_df, low_df, ma_60,
         top_k=top_k,
         threshold=adjusted_threshold,
+        market_close=market_close,
     )
 
     metrics = compute_risk_metrics(equity_df, trades_df, initial_capital)
@@ -123,9 +129,9 @@ def run_single_ablation(label, factors, close_df, open_df, high_df, low_df, vol_
 def main():
     parser = argparse.ArgumentParser(description='因子 Ablation Study')
     parser.add_argument('--tickers', nargs='+', default=DEFAULT_TICKERS)
-    parser.add_argument('--days', type=int, default=800)
+    parser.add_argument('--days', type=int, default=1200)  # 對齊 README
     parser.add_argument('--capital', type=float, default=1_000_000)
-    parser.add_argument('--top-k', type=int, default=3)
+    parser.add_argument('--top-k', type=int, default=5)    # 對齊 README
     parser.add_argument('--threshold', type=float, default=2.0)
     args = parser.parse_args()
 
@@ -136,6 +142,13 @@ def main():
     # 下載資料
     close_df, open_df, high_df, low_df, vol_df = fetch_panel_data(args.tickers, days=args.days)
     universe_mask = None  # ablation 在靜態池中跑
+
+    # 下載 0050 用於 regime filter（對齊 README）
+    from strategy.benchmark import fetch_benchmark
+    market_close = fetch_benchmark('0050', days=args.days)
+    if len(market_close) == 0:
+        market_close = None
+        print('⚠️ 無法下載 0050，regime filter 停用')
 
     # === 因子組合實驗 ===
     all_factors = ['momentum', 'trend', 'volume', 'stability']
@@ -162,6 +175,7 @@ def main():
         metrics, eq_df = run_single_ablation(
             label, factors, close_df, open_df, high_df, low_df, vol_df,
             universe_mask, hold_days, args.capital, args.top_k, args.threshold,
+            market_close=market_close,
         )
         results.append(metrics)
         equity_curves[label] = eq_df

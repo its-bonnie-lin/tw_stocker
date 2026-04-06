@@ -90,11 +90,11 @@ class EventDrivenBacktester:
         賣出成本率（手續費 + 證交稅，預設 0.004425 = 0.1425% + 0.3%）
     """
 
-    def __init__(self, tp_pct=0.15, sl_pct=0.08, max_hold_days=30,
+    def __init__(self, tp_pct=0.15, sl_pct=0.08, max_hold_days=20,
                  initial_capital=1_000_000, position_size=0.10,
-                 tp_sl_mode='atr', tp_atr_mult=3.0, sl_atr_mult=2.0,
+                 tp_sl_mode='atr', tp_atr_mult=4.0, sl_atr_mult=3.0,
                  trailing_stop=False, trailing_atr_mult=2.0,
-                 regime_filter=False, gap_filter_atr=0,
+                 regime_filter=False, gap_filter_atr=1.5,
                  volume_confirm=False,
                  blacklist_lookback=0, blacklist_min_wr=0.25,
                  breakeven_pct=0, slippage=0, vol_parity=False,
@@ -418,9 +418,11 @@ class EventDrivenBacktester:
                 cl_pause_counter -= 1
 
             # ── Step 2.5: Regime Deleverage：大盤翻空後分段降曝險 ──
+            # ━━ FIX: 使用 t-1 大盤數據（避免同日 lookahead）━━
             if self.regime_deleverage and market_ma60 is not None and active_trades:
                 try:
-                    mkt_date = market_close.index.get_indexer([date], method='ffill')[0]
+                    prev_date = dates[i - 1]
+                    mkt_date = market_close.index.get_indexer([prev_date], method='ffill')[0]
                     if mkt_date >= 0:
                         mkt_val = market_close.iloc[mkt_date]
                         mkt_ma = market_ma60.iloc[mkt_date]
@@ -471,10 +473,12 @@ class EventDrivenBacktester:
 
             if len(active_trades) < max_positions and entry_allowed:
                 # ── Regime Filter：大盤 < 60MA 時暫停所有進場 ──
+                # ━━ FIX: 使用 t-1 大盤數據（避免同日 lookahead——開盤時不知道今天收盤） ━━
                 regime_ok = True
                 if market_ma60 is not None:
                     try:
-                        mkt_date = market_close.index.get_indexer([date], method='ffill')[0]
+                        prev_date = dates[i - 1]
+                        mkt_date = market_close.index.get_indexer([prev_date], method='ffill')[0]
                         if mkt_date >= 0:
                             mkt_val = market_close.iloc[mkt_date]
                             mkt_ma = market_ma60.iloc[mkt_date]
@@ -517,11 +521,12 @@ class EventDrivenBacktester:
                                 if gap > self.gap_filter_atr * atr_val:
                                     continue
 
+                        # ━━ FIX: 使用 t-1 成交量（避免同日 lookahead——開盤時不知道今天總量） ━━
                         if vol_ma20 is not None and ticker in vol_df.columns:
-                            today_vol = vol_df[ticker].iloc[i] if i < len(vol_df) else np.nan
-                            avg_vol = vol_ma20[ticker].iloc[i] if i < len(vol_ma20) else np.nan
-                            if not pd.isna(today_vol) and not pd.isna(avg_vol) and avg_vol > 0:
-                                if today_vol < avg_vol:
+                            prev_vol = vol_df[ticker].iloc[i - 1] if i - 1 >= 0 else np.nan
+                            avg_vol = vol_ma20[ticker].iloc[i - 1] if i - 1 >= 0 else np.nan
+                            if not pd.isna(prev_vol) and not pd.isna(avg_vol) and avg_vol > 0:
+                                if prev_vol < avg_vol:
                                     continue
 
                         candidates.append((ticker, score, entry_price))

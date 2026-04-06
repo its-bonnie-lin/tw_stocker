@@ -5,26 +5,27 @@
 
 📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
 
-## 績效總覽（含滑價 10bps + Gap-Aware Fill）
+## 績效總覽（v8.1 honest baseline — 無 lookahead）
 
 | 指標 | 值 | 說明 |
 |------|:---:|------|
-| **Sharpe** | **2.96** | 含 10bps 滑價的誠實回測 |
-| **年化報酬** | **+91.4%** | 包含交易成本 + 滑價 |
-| **MDD** | **-18.4%** | Gap-aware stop fill |
-| **Calmar** | **4.96** | 年化報酬/MDD |
-| **Profit Factor** | **2.25** | 總獲利/總虧損 |
-| **勝率** | **61.1%** | 473 筆交易 |
+| **Sharpe** | **1.95** | 無 lookahead + 10bps 滑價 + gap-aware fill |
+| **年化報酬** | **+60.6%** | 包含交易成本 + 滑價 |
+| **MDD** | **-30.0%** | 真實左尾（不再被 lookahead 低估） |
+| **Calmar** | **2.02** | 年化報酬/MDD |
+| **Profit Factor** | **1.79** | 總獲利/總虧損 |
+| **勝率** | **57.5%** | 480 筆交易 |
 
-### v7 vs v6 變化（回測誠實化）
+### v8.1 honest vs v7 (lookahead)
 
-| 指標 | v6 (slippage=0) | **v7 (honest)** | 差異 |
-|------|:---------------:|:---------------:|:----:|
-| Sharpe | 3.12 | **2.96** | -5% |
-| MDD | -17.7% | **-18.4%** | +0.7% |
-| 年化 | +96.6% | **+91.4%** | -5.2% |
+| 指標 | v7 (lookahead) | **v8.1 (honest)** | 差異 | 原因 |
+|------|:--------------:|:-----------------:|:----:|------|
+| Sharpe | 2.96 | **1.95** | -34% | regime filter 用 t-1 |
+| MDD | -18.4% | **-30.0%** | +11.6% | 左尾不再被低估 |
+| 年化 | +91.4% | **+60.6%** | -30.8% | volume confirm 用 t-1 |
+| Calmar | 4.96 | **2.02** | -59% | MDD 惡化主因 |
 
-> v7 的績效下降來自回測誠實化（滑價 + gap-aware fill），不是策略劣化。
+> ⚠️ v7 的績效被兩個 lookahead bias 系統性高估：(1) 大盤 regime filter 用同日收盤決定是否在同日開盤進場，(2) 成交量確認用同日成交量。v8.1 修正後，所有進場決策只使用 t-1 資訊。
 
 ### Monte Carlo 壓力測試（Block Bootstrap, 2000x）
 
@@ -106,31 +107,32 @@ python monte_carlo.py --runs 2000 --block-size 5
 | `--ml-weights` | Sharpe -55% |
 | `--rank-weight` | Sharpe -27% |
 
-## v7 回測誠實化 — 技術細節
+## v8.1 回測誠實化 — Lookahead 修正
 
-### Gap-Aware Stop Fill
+### 修正 1：Regime Filter Lookahead（影響最大）
 ```
-v6: exit_price = stop_price          (永遠成交在停損價)
-v7: exit_price = min(stop_price, open)  (gap down 用開盤價，更接近實盤)
+v7: market_close[date] > market_ma60[date]  ← 用同日收盤決定同日開盤進場
+v8: market_close[i-1] > market_ma60[i-1]    ← 只用昨日資訊
 ```
-實測影響：Sharpe 3.12 → 3.11 (幾乎為零，代表大部分停損沒有被 gap 穿越)
+影響：Sharpe 2.96 → 1.95, MDD -18.4% → -30.0%（大盤轉弱時多了很多錯誤進場）
 
-### Block Bootstrap Monte Carlo
+### 修正 2：Volume Confirm Lookahead
 ```
-v6: random.choices(trades, k=n)       (打散時序，忽略連續虧損)
-v7: block_bootstrap(trades, block=5)  (保留一週的連續性)
+v7: vol_df[ticker].iloc[i] > vol_ma20[i]    ← 用同日成交量
+v8: vol_df[ticker].iloc[i-1] > vol_ma20[i-1] ← 用昨日成交量
 ```
-結果：最差 5% MDD 從 -12.5% 惡化到 -17.5%（更接近真實尾部風險）
 
-### 11 組完整消融測試結果
-| Config | Sharpe | MDD | 年化 | 交易 |
-|--------|:------:|:---:|:----:|:----:|
-| v6 base | 3.12 | -17.7% | +97% | 471 |
-| + gap-aware | 3.11 | -17.7% | +96% | 470 |
-| **+ slippage** | **2.94** | **-18.4%** | **+91%** | **472** |
-| + rank weight | 2.26 | -25.9% | +71% | 461 |
-| + heat 2% | 0.84 | -21.1% | +11% | 97 |
-| + regime delev | 2.11 | -23.9% | +66% | 470 |
+### 修正 3：Constructor Defaults 對齊
+```
+v7 backtester defaults: tp_atr=3.0, sl_atr=2.0, hold=30, gap=0, top_k=3
+v8 backtester defaults: tp_atr=4.0, sl_atr=3.0, hold=20, gap=1.5, top_k=5  ← 對齊 README
+```
+
+### 修正 4：Ablation Study 對齊
+```
+v7 ablation: tp_atr=3.0, sl_atr=1.5, days=800, top_k=3, no regime filter
+v8 ablation: tp_atr=4.0, sl_atr=3.0, days=1200, top_k=5, regime filter  ← 對齊 README
+```
 
 ## v8 新功能 — 籌碼因子 + Paper Trading 強化
 
