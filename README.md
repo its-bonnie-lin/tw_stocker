@@ -121,18 +121,20 @@ python monte_carlo.py --runs 2000 --block-size 5
 | `--gap-aware-sizing` | `true` | v8.3: 跳空減倉 |
 | `--slippage` | `0.001` | 滑價 10bps |
 
-### 已驗證無效（永久排除）
-| 功能 | 影響 |
-|------|------|
-| `--breakeven` | Sharpe → 0.48 ☠️ |
-| `--trailing` | Sharpe → ~0.08 ☠️ |
-| `--ml-weights` | Sharpe -55% |
-| `--rank-weight` | Sharpe -27% |
-| `--confidence-k` | 零效果 |
-| `--mid-hold-review` | MDD 惡化 |
-| `--residual-momentum` | MDD -22.6% |
-| `--trend-quality` | Sharpe -17% |
-| FULL STACK | Sharpe 1.90 |
+### 已驗證無效（理論水土不服 / 實務無效，已永久排除）
+
+> **「橘子與蘋果」**：我們進行了大量實證測試，證實許多歐美經典量化理論與台股市場結構（跳空、漲跌幅限制、群聚效應）並不相容。
+
+| 測試功能 / 理論 | 原理 / 預期 | 實際影響 | 失敗原因分析 |
+|------|------|------|------|
+| `--ml-weights` | LightGBM 預測權重 | Sharpe -55% | 因子與報酬間的非線性關係過擬合 |
+| `--residual-momentum` | 扣除 Beta 算殘差動能 | MDD 反向惡化 | 台股動能板塊群聚，扣 Beta 削弱了真實的產業動量 |
+| `--trend-quality` / FIP | Frog-in-Pan 平滑度 | Sharpe 跌至 1.77 | 懲罰了台股最肥美的「跳空鎖死」飆股起漲點 |
+| `Skip-month` | 美股 1 個月短線反轉 | Sharpe 跌至 1.64 | 台股有極強的強者恆強慣性，跳過最近一個月等於錯過主升段 |
+| `Absolute Mom Gate` | 個股 60 日絕對績效 > 0 | MDD 反向惡化 | 破壞了 Graduated Regime 底下的「大跌後初級反彈」右側買點 |
+| `Limit-Up Bonus` | 漲停鎖死次數加權 | Sharpe 跌至 2.26 | 鼓勵純追高，買在拉抬出貨的頂部 |
+| `Inst Flow Gate` | 近 20 日法人必須買超 | Sharpe 跌破 1.0 | 過度迷信法人，過濾掉 85% 由內資/主力拉抬的真正飆股 |
+| `--breakeven` / `--trailing`| 提早保本停利 | Sharpe 崩潰至 0.08 | 高勝率動能策略不能怕抱不住，太早走錯失後半段 |
 
 ## v8.1 回測誠實化 — Lookahead 修正
 
