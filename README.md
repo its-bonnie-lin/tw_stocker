@@ -4,6 +4,7 @@
 經 Walk-Forward 驗證、100+ 組參數掃描、**三波 13 組消融實驗（全敗）**、2000 次 Block Bootstrap Monte Carlo 壓力測試。
 
 📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
+📈 **Paper Trading**：https://voidful.github.io/tw_stocker/paper_trading.html
 
 ## 績效總覽（v8.5 — Breadth Regime + regime floor 10%）
 
