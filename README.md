@@ -1,20 +1,20 @@
-# TW Stocker v8.4 — AI 量化交易系統 *(Ablation-Proven Local Optimum)*
+# TW Stocker v8.5 — AI 量化交易系統 *(Ablation-Proven Local Optimum)*
 
 中期橫截面動量策略，流動性 Universe 排名 + 事件驅動回測 + ATR 停利停損。
 經 Walk-Forward 驗證、100+ 組參數掃描、**三波 13 組消融實驗（全敗）**、2000 次 Block Bootstrap Monte Carlo 壓力測試。
 
 📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
 
-## 績效總覽（v8.4 — sector 0.75 + regime floor 30% + gap-aware）
+## 績效總覽（v8.5 — Breadth Regime + regime floor 10%）
 
 | 指標 | 值 | 說明 |
 |------|:---:|------|
-| **Sharpe** | **2.38** | 無 lookahead + 10bps 滑價 + graduated regime + sector 75% + gap-aware |
-| **年化報酬** | **+62.8%** | 包含交易成本 + 滑價 |
-| **MDD** | **-15.5%** | 四段式曝險(含30%底線) + 板塊分散 + 跳空減倉 |
-| **Calmar** | **4.06** | 年化報酬/MDD |
+| **Sharpe** | **2.47** | 四波 32 組消融驗證最佳配置 |
+| **年化報酬** | **+62.5%** | 包含交易成本 + 滑價 |
+| **MDD** | **-14.2%** | Breadth Regime 精準捕捉中小型股市況 |
+| **Calmar** | **4.40** | 年化報酬/MDD |
 | **Profit Factor** | **1.74** | 總獲利/總虧損 |
-| **勝率** | **61.1%** | 562 筆交易 |
+| **勝率** | **54.8%** | 562 筆交易 |
 
 ### 雙 Benchmark 對比
 
@@ -40,9 +40,10 @@
 | v8.2 (sector cap) | 2.30 | +63% | -17% | 3.72 | ✅ + sector cap 60% |
 | v8.3 (gap-aware) | 2.33 | +58% | -16% | 3.68 | ✅ + gap-aware sizing |
 | **v8.4 (return opt)** | **2.40** | **+63%** | **-16%** | **4.00** | ✅ + sector 75% + regime floor 20% |
+| **v8.5 (breadth)** | **2.47** | **+63%** | **-14%** | **4.40** | ✅ + Breadth Regime + floor 10% |
 
-> v8.3→v8.4：sector cap 放寬至 75%（允許更多電子股集中），regime floor 20%（弱勢不完全停手）。
-> 近期 2/23~4/2 報酬：v8.3 +1.3% → v8.4 **+7.0%**
+> v8.4→v8.5：Breadth Regime 用 Universe 內部寬度修正 regime，更精準捕捉中小型股市況。
+> Regime floor 從 30% 降至 10%，搭配 Breadth 精準度提升，弱勢時更積極減倉。
 
 ### Monte Carlo 壓力測試（Block Bootstrap, 2000x, v8.2 honest）
 
@@ -116,7 +117,8 @@ python monte_carlo.py --runs 2000 --block-size 5
 | `--gap-filter` | `1.5` | 跳空過濾 ATR 倍數 |
 | `--universe-size` | `60` | 動態流動性 Universe 大小 |
 | `--regime-graduated` | `true` | 四段式曝險 (100/70/40/20%) |
-| `--regime-floor` | `0.30` | v8.4: 弱勢最低曝險（不完全停手） |
+| `--regime-floor` | `0.10` | v8.5: 弱勢最低曝險 |
+| `--breadth-regime` | `true` | v8.5: 市場寬度修正 regime 判斷 |
 | `--sector-max-pct` | `0.75` | v8.4: 板塊分散上限（放寬允許集中） |
 | `--gap-aware-sizing` | `true` | v8.3: 跳空減倉 |
 | `--slippage` | `0.001` | 滑價 10bps |

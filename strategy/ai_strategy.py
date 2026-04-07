@@ -9,7 +9,7 @@ Production scoring: rank_momentum × 3 + rank_trend × 1
 - breakeven, trailing, confidence-k, mid-hold-review: 有害或零效果
 """
 
-STRATEGY_VERSION = "v8.4"
+STRATEGY_VERSION = "v8.5"
 
 import yfinance as yf
 import pandas as pd

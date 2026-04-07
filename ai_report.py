@@ -1419,7 +1419,7 @@ def parse_args():
         help='停用四段式曝險，改用 binary regime filter'
     )
     parser.add_argument(
-        '--regime-floor', type=float, default=0.30,
+        '--regime-floor', type=float, default=0.10,
         help='空頭 regime 最低曝險下限 (0.0=完全停止, 0.2=維持20%%進場能力)'
     )
     parser.add_argument(
@@ -1436,8 +1436,8 @@ def parse_args():
     )
     # === Phase 2 features ===
     parser.add_argument(
-        '--breadth-regime', action='store_true',
-        help='啟用 Breadth-aware regime：用 universe 內部寬度修正 regime 判斷'
+        '--breadth-regime', action='store_true', default=True,
+        help='v8.5: Breadth-aware regime：用 universe 內部寬度修正 regime 判斷 (預設開啟)'
     )
     parser.add_argument(
         '--candidate-breadth', action='store_true',
