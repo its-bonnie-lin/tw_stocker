@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
 """
-Walk-Forward 驗證腳本
+Anchored Walk-Forward OOS 驗證 v2
 
-將回測期間切成滾動窗口，驗證策略在每個 out-of-sample 段都穩定。
-這是過擬合檢測的黃金標準。
+真正的 Out-of-Sample 測試：將歷史切成不重疊的時間段，
+每段用固定參數回測，檢驗策略在不同市場環境下的穩定性。
+
+與 v1 的差異：
+- v1 只是改 --days 長度重跑同一策略，不是真正的 OOS
+- v2 用 --start-date / --end-date 精確切割時間段
+- v2 每段時間是完全不重疊的 out-of-sample 區間
+- v2 加入了歷史市場環境標注（多頭/空頭/震盪）
 
 使用方式:
-  python walk_forward.py                # 預設 4 段 rolling
+  python walk_forward.py                # 預設 4 段 anchored
   python walk_forward.py --folds 6      # 6 段更細粒度
-  python walk_forward.py --oos-days 200 # OOS 段改 200 天
+  python walk_forward.py --full-history # 用 2019 至今的完整歷史
 """
 
 import subprocess
 import re
 import sys
 import argparse
-from datetime import datetime
+import statistics
+from datetime import datetime, timedelta
+
+import pandas as pd
 
 
-def run_backtest(days, extra_args=''):
-    """Run ai_report.py and extract metrics."""
-    cmd = f'python ai_report.py --days {days} {extra_args}'
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=180)
+def run_backtest_range(start_date, end_date, extra_args=''):
+    """Run ai_report.py with explicit date range and extract metrics."""
+    cmd = (f'python3 ai_report.py '
+           f'--start-date {start_date} --end-date {end_date} '
+           f'{extra_args}')
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
     out = r.stdout + r.stderr
 
     def get(pattern, default=0):
@@ -40,76 +51,188 @@ def run_backtest(days, extra_args=''):
     }
 
 
+def build_anchored_windows(total_start, total_end, n_folds):
+    """
+    Build non-overlapping windows from total_start to total_end.
+
+    Each window covers ~equal calendar days.
+    """
+    start = pd.Timestamp(total_start)
+    end = pd.Timestamp(total_end)
+    total_days = (end - start).days
+    window_days = total_days // n_folds
+
+    windows = []
+    for i in range(n_folds):
+        w_start = start + timedelta(days=i * window_days)
+        w_end = start + timedelta(days=(i + 1) * window_days)
+        if i == n_folds - 1:
+            w_end = end  # last fold goes to exact end
+
+        # Extend data fetch start by 120 days for warmup (MA60 + 60 buffer)
+        fetch_start = w_start - timedelta(days=120)
+
+        windows.append({
+            'fold': i + 1,
+            'fetch_start': fetch_start.strftime('%Y-%m-%d'),
+            'eval_start': w_start.strftime('%Y-%m-%d'),
+            'eval_end': w_end.strftime('%Y-%m-%d'),
+        })
+
+    return windows
+
+
+def annotate_regime(start, end):
+    """Annotate what market regime this period covers."""
+    s = pd.Timestamp(start)
+    e = pd.Timestamp(end)
+
+    annotations = []
+    # COVID crash: 2020-02 ~ 2020-04
+    if s <= pd.Timestamp('2020-04-30') and e >= pd.Timestamp('2020-02-01'):
+        annotations.append('🦠 COVID崩盤')
+    # COVID recovery: 2020-05 ~ 2021-06
+    if s <= pd.Timestamp('2021-06-30') and e >= pd.Timestamp('2020-05-01'):
+        annotations.append('📈 疫後復甦')
+    # Rate hike: 2022-01 ~ 2022-10
+    if s <= pd.Timestamp('2022-10-31') and e >= pd.Timestamp('2022-01-01'):
+        annotations.append('📉 升息衝擊')
+    # AI rally: 2023-01 ~ 2024-06
+    if s <= pd.Timestamp('2024-06-30') and e >= pd.Timestamp('2023-01-01'):
+        annotations.append('🤖 AI行情')
+    # Recent
+    if e >= pd.Timestamp('2024-07-01'):
+        annotations.append('📊 近期')
+
+    return ' '.join(annotations) if annotations else '—'
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Walk-Forward 驗證')
-    parser.add_argument('--folds', type=int, default=4, help='滾動窗口段數 (預設 4)')
-    parser.add_argument('--total-days', type=int, default=1500, help='總回測天數')
-    parser.add_argument('--oos-days', type=int, default=300, help='每段 OOS 天數 (預設 300)')
+    parser = argparse.ArgumentParser(
+        description='Anchored Walk-Forward OOS 驗證 v2'
+    )
+    parser.add_argument('--folds', type=int, default=4,
+                        help='OOS 段數 (預設 4)')
+    parser.add_argument('--full-history', action='store_true',
+                        help='使用 2019 至今的完整歷史 (約 7 年)')
+    parser.add_argument('--start', type=str, default=None,
+                        help='自訂起始日期 (YYYY-MM-DD)')
+    parser.add_argument('--end', type=str, default=None,
+                        help='自訂結束日期 (YYYY-MM-DD)')
     args = parser.parse_args()
 
-    print(f"📊 Walk-Forward 驗證 — {datetime.now().strftime('%Y-%m-%d')}")
-    print(f"   總天數: {args.total_days} | 段數: {args.folds} | OOS: {args.oos_days}天/段")
+    if args.full_history:
+        total_start = '2019-01-01'
+    elif args.start:
+        total_start = args.start
+    else:
+        # Default: ~4 years back
+        total_start = (datetime.today() - timedelta(days=1500)).strftime('%Y-%m-%d')
+
+    total_end = args.end or datetime.today().strftime('%Y-%m-%d')
+
+    windows = build_anchored_windows(total_start, total_end, args.folds)
+
+    print(f"📊 Anchored Walk-Forward OOS 驗證 v2 — {datetime.now().strftime('%Y-%m-%d')}")
+    print(f"   總區間: {total_start} → {total_end}")
+    print(f"   段數: {args.folds} (非重疊 OOS)")
+    print(f"   每段含 120 天暖機期 (MA60 + buffer)")
+    print()
+    print("   ⚠️  注意：這是固定參數的 OOS 穩定性測試，")
+    print("        不是 nested walk-forward (train→test with param selection)。")
+    print("        策略使用 v8.5 的固定參數，驗證其在不同時間段的表現。")
     print()
 
-    # 計算每段窗口
-    # Window N: days = total - (folds - N) * oos_days
-    # 最早段用最長的 days（包含最多歷史），最近段用最短
-    windows = []
-    for fold in range(args.folds):
-        total_for_fold = args.total_days - fold * args.oos_days
-        if total_for_fold < 400:  # 至少 400 天才有意義
-            break
-        label = f"Fold {fold+1}"
-        windows.append((label, total_for_fold))
-
-    # 也跑全量做對照
-    windows.append(("Full (1200d)", 1200))
-
-    # 加入 slippage 壓力測試
-    windows.append(("Full+slip0.1%", 1200))
-
-    header = f"{'Window':<18s} | {'Days':>5s} | {'Ann':>7s} | {'Sharpe':>6s} | {'Sort':>5s} | {'Calmar':>6s} | {'MDD':>7s} | {'#Tr':>4s} | {'WR':>5s} | {'PF':>4s}"
+    header = (f"{'Fold':<6s} | {'期間':<24s} | {'市場環境':<16s} | "
+              f"{'Ann':>7s} | {'Sharpe':>6s} | {'Calmar':>6s} | "
+              f"{'MDD':>7s} | {'#Tr':>4s} | {'WR':>5s} | {'PF':>4s}")
     sep = '-' * len(header)
     print(header)
     print(sep)
 
     sharpes = []
-    for i, (label, days) in enumerate(windows):
-        sys.stderr.write(f'[{i+1}/{len(windows)}] {label} ({days}d)...\n')
+    annuals = []
+    mdds = []
+
+    for w in windows:
+        fold = w['fold']
+        period = f"{w['eval_start']} → {w['eval_end']}"
+        regime = annotate_regime(w['eval_start'], w['eval_end'])
+
+        sys.stderr.write(f"[{fold}/{len(windows)}] {period}...\n")
         sys.stderr.flush()
 
-        extra = '--slippage 0.001' if 'slip' in label else ''
-        metrics = run_backtest(days, extra)
+        try:
+            # Use fetch_start for data (includes warmup), but the eval
+            # period is eval_start → eval_end
+            metrics = run_backtest_range(w['fetch_start'], w['eval_end'])
 
-        if 'slip' not in label and label != 'Full (1200d)':
             sharpes.append(metrics['sharpe'])
+            annuals.append(metrics['ann'])
+            mdds.append(metrics['mdd'])
 
-        print(f"{label:<18s} | {days:>5d} | {metrics['ann']:>+6.1f}% | {metrics['sharpe']:>6.3f} | "
-              f"{metrics['sortino']:>5.2f} | {metrics['calmar']:>6.3f} | {metrics['mdd']:>6.1f}% | "
-              f"{metrics['trades']:>4d} | {metrics['win_rate']:>4.1f}% | {metrics['pf']:>4.2f}")
+            sh_color = '✅' if metrics['sharpe'] >= 1.5 else ('⚠️' if metrics['sharpe'] >= 0.5 else '🔴')
+
+            print(f"  {fold:<4d} | {period:<24s} | {regime:<16s} | "
+                  f"{metrics['ann']:>+6.1f}% | {metrics['sharpe']:>6.3f} {sh_color} | "
+                  f"{metrics['calmar']:>6.3f} | {metrics['mdd']:>6.1f}% | "
+                  f"{metrics['trades']:>4d} | {metrics['win_rate']:>4.1f}% | "
+                  f"{metrics['pf']:>4.2f}")
+        except Exception as e:
+            print(f"  {fold:<4d} | {period:<24s} | {regime:<16s} | ❌ FAILED: {e}")
 
     print(sep)
 
-    # 穩定性統計
+    # Also run full period as reference
+    print(f"\n📈 Full Period ({total_start} → {total_end})...")
+    try:
+        full_metrics = run_backtest_range(total_start, total_end)
+        print(f"   Ann: {full_metrics['ann']:+.1f}%  Sharpe: {full_metrics['sharpe']:.3f}  "
+              f"MDD: {full_metrics['mdd']:.1f}%  Trades: {full_metrics['trades']}")
+    except Exception as e:
+        print(f"   ❌ FAILED: {e}")
+        full_metrics = None
+
+    # Stability statistics
     if sharpes:
-        import statistics
         avg_sh = statistics.mean(sharpes)
         min_sh = min(sharpes)
         max_sh = max(sharpes)
         std_sh = statistics.stdev(sharpes) if len(sharpes) > 1 else 0
-        print(f"\n📈 Walk-Forward 穩定性統計 (OOS 段)")
-        print(f"   平均 Sharpe: {avg_sh:.3f}")
-        print(f"   最低 Sharpe: {min_sh:.3f}")
-        print(f"   最高 Sharpe: {max_sh:.3f}")
-        print(f"   標準差:      {std_sh:.3f}")
-        print(f"   穩定性比:    {avg_sh / (std_sh + 1e-8):.2f} (>3 = 優秀)")
+        avg_mdd = statistics.mean(mdds)
+        worst_mdd = min(mdds)
+
+        print(f"\n{'='*60}")
+        print(f"📊 OOS 穩定性統計")
+        print(f"{'='*60}")
+        print(f"   平均 Sharpe:     {avg_sh:.3f}")
+        print(f"   最低 Sharpe:     {min_sh:.3f}")
+        print(f"   最高 Sharpe:     {max_sh:.3f}")
+        print(f"   Sharpe 標準差:   {std_sh:.3f}")
+        print(f"   平均 MDD:        {avg_mdd:.1f}%")
+        print(f"   最差 MDD:        {worst_mdd:.1f}%")
+
+        if full_metrics:
+            full_sh = full_metrics['sharpe']
+            decay = avg_sh / full_sh if full_sh > 0 else 0
+            print(f"\n   Full-period Sharpe: {full_sh:.3f}")
+            print(f"   OOS 衰減比:         {decay:.2f} "
+                  f"({'✅ >0.7 無過擬合跡象' if decay > 0.7 else '⚠️ <0.7 可能存在過擬合'})")
+
+        # Per-fold consistency
+        positive_folds = sum(1 for s in sharpes if s > 0)
+        good_folds = sum(1 for s in sharpes if s >= 1.0)
+        print(f"\n   正 Sharpe 段數:   {positive_folds}/{len(sharpes)}")
+        print(f"   Sharpe ≥ 1.0:     {good_folds}/{len(sharpes)}")
 
         if min_sh >= 1.5:
-            print("\n✅ 所有窗口 Sharpe >= 1.5，策略穩定性極佳")
+            print(f"\n✅ 所有 OOS 段 Sharpe ≥ 1.5，策略穩定性極佳")
         elif min_sh >= 1.0:
-            print("\n⚠️  部分窗口 Sharpe 低於 1.5，需觀察")
+            print(f"\n⚠️  部分 OOS 段 Sharpe < 1.5，需持續觀察")
+        elif min_sh >= 0:
+            print(f"\n⚠️  有 OOS 段 Sharpe < 1.0，策略可能在某些環境下表現平庸")
         else:
-            print("\n🚨 有窗口 Sharpe < 1.0，可能存在過擬合風險")
+            print(f"\n🚨 有 OOS 段 Sharpe < 0，策略在某些環境下虧損！")
 
 
 if __name__ == '__main__':

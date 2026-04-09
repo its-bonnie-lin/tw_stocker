@@ -79,6 +79,15 @@ def full_sweep():
         ('all-struct', '--mean-reversion --dynamic-risk --futures-hedge'),
     ])
 
+    # Phase 5: Sector Flow Tilt
+    configs.extend([
+        ('sft', '--sector-flow-tilt'),
+        ('sft+str0.5', '--sector-flow-tilt --tilt-strength 0.5'),
+        ('sft+str0.7', '--sector-flow-tilt --tilt-strength 0.7'),
+        ('sft+w5,10,15', '--sector-flow-tilt --tilt-windows 5,10,15'),
+        ('sft+str0.7+w5,10,15', '--sector-flow-tilt --tilt-strength 0.7 --tilt-windows 5,10,15'),
+    ])
+
     return configs
 
 

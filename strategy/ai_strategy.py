@@ -20,7 +20,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-def fetch_panel_data(tickers, days=800):
+def fetch_panel_data(tickers, days=800, start_date=None, end_date=None):
     """
     批次下載多檔台股的 OHLCV 日線資料。
 
@@ -30,16 +30,31 @@ def fetch_panel_data(tickers, days=800):
         台股代號列表，例如 ['2330', '2317', '2454']
     days : int
         回溯天數，預設 800 天（約 3 年交易日）
+    start_date : str or datetime, optional
+        明確指定起始日期（優先於 days）
+    end_date : str or datetime, optional
+        明確指定結束日期（預設為今天）
 
     Returns
     -------
     close_df, open_df, high_df, low_df, vol_df : tuple[pd.DataFrame]
         各為 (日期 x 股票代號) 的 DataFrame，已做 forward fill
     """
-    print(f"📥 正在批次下載 {len(tickers)} 檔股票的 {days} 天歷史資料...")
+    if end_date is not None:
+        end_dt = pd.Timestamp(end_date)
+    else:
+        end_dt = pd.Timestamp(datetime.today())
 
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=days)
+    if start_date is not None:
+        start_dt = pd.Timestamp(start_date)
+        actual_days = (end_dt - start_dt).days
+    else:
+        start_dt = end_dt - timedelta(days=days)
+        actual_days = days
+
+    print(f"📥 正在批次下載 {len(tickers)} 檔股票的歷史資料 "
+          f"({start_dt.strftime('%Y-%m-%d')} → {end_dt.strftime('%Y-%m-%d')}, "
+          f"~{actual_days} 天)...")
 
     tw_tickers = [f"{t}.TW" for t in tickers]
 
@@ -51,7 +66,7 @@ def fetch_panel_data(tickers, days=800):
         batch_num = batch_start // batch_size + 1
         total_batches = (len(tw_tickers) + batch_size - 1) // batch_size
         print(f"   📦 下載批次 {batch_num}/{total_batches} ({len(batch)} 檔)...")
-        df = yf.download(batch, start=start_date, end=end_date, progress=False)
+        df = yf.download(batch, start=start_dt, end=end_dt, progress=False)
         if not df.empty:
             all_dfs.append(df)
 

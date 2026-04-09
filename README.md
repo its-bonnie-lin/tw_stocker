@@ -1,12 +1,109 @@
-# TW Stocker v8.5 — AI 量化交易系統 *(Ablation-Proven Local Optimum)*
+# TW Stocker v9.0 — AI 量化交易系統（雙策略架構）
 
-中期橫截面動量策略，流動性 Universe 排名 + 事件驅動回測 + ATR 停利停損。
-經 Walk-Forward 驗證、100+ 組參數掃描、**三波 13 組消融實驗（全敗）**、2000 次 Block Bootstrap Monte Carlo 壓力測試。
+中期動量 + 板塊輪動的雙策略系統。v8.5 個股動量穩健底倉 + Sector Rotation v2 板塊資金流追蹤。
+美股前提（SPY/VIX/SOX）→ 板塊資金流選擇 → 板塊內選股。經 11 段歷史危機壓測 + 00981A 對標驗證。
 
 📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
 📈 **Paper Trading**：https://voidful.github.io/tw_stocker/paper_trading.html
 
-## 績效總覽（v8.5 — Breadth Regime + regime floor 10%）
+---
+
+## 雙策略架構總覽
+
+| | v8.5 Momentum | Sector Rotation v2 (NEW) |
+|---|:---:|:---:|
+| **邏輯** | 個股 cross-sectional ranking | 先選板塊 → 板塊內排名 |
+| **Regime** | 台股 0050 vs MA60 | 🌍 **美股 SPY + VIX + SOX** |
+| **選股因子** | Mom(20d)×3 + Trend(60MA)×1 | 板塊 flow(10/15/20d) + 板塊內動量 |
+| **角色** | 穩健底倉（低 MDD） | 積極追蹤（高報酬） |
+| **年化 (7y)** | ~25% | **+36.4%** |
+| **Sharpe (7y)** | 1.04 | **1.34** |
+
+---
+
+## Sector Rotation v2 — 板塊輪動策略 (v1.2 beat-00981A)
+
+### 三層架構
+
+```
+Layer 1: 美股 Macro Regime（前提門檻）
+  SPY trend + VIX level → 整體曝險 (0.0 ~ 1.0)
+  SPY + SOX 雙空 → 幾乎停止 (0.1)
+  VIX > 28 → 完全停止 (0.0)
+
+Layer 2: 板塊資金流（主體選擇）
+  7 大板塊的 10/15/20d 平均報酬加權排名
+  取前 3 板塊，板塊均報酬 < -3% → 不進場
+
+Layer 3: 板塊內選股
+  momentum(20d) × 2 + trend(close > MA60) × 1
+  每板塊 Top-3，合計 6~9 檔
+
+出場: ATR TP/SL 4.0/3.0 + 20 天持倉上限
+成本: 買 0.143% + 賣 0.443% + 滑價 10bps
+```
+
+### 關鍵設計：美股前提
+
+| 條件 | 曝險 | 說明 |
+|------|:---:|------|
+| SPY↑ + VIX < 22 | **100%** | 全面多頭 |
+| SPY↑ + VIX 22~25 | 70% | 輕微恐慌 |
+| SPY↓ + VIX < 25 | 40% | 溫和空頭 |
+| SPY↓ + VIX 25~28 + SPY > MA20 | 50% | 復甦允許 |
+| SPY↓ + VIX 25~28 | 20% | 中等恐慌 |
+| SPY + SOX 雙空 | **10%** | 最危險 |
+| VIX > 28 | **0%** | 完全停止 |
+
+### SOX 科技門檻 (v1.1: 影響所有板塊)
+
+| 條件 | 效果 |
+|------|------|
+| SOX > MA60 | 全面開放 |
+| SOX < MA60, mom > -3% | **所有板塊半倉**（不只科技） |
+| SOX < MA60, mom < -3% | 科技禁止 + 其他半倉 |
+
+---
+
+## 11 段歷史危機壓測
+
+| 期間 | SR v2 Sharpe | v8.5 Sharpe | 0050 | SR MDD | VIX 均 |
+|------|:---:|:---:|:---:|:---:|:---:|
+| 💥 金融海嘯 '08-'09 | -1.81 | -0.78 | 0.95 | -40% | 35 |
+| 💥 海嘯復甦 '09-'10 | **0.26** | 1.28 | 2.16 | -15% | 28 |
+| 🦠 疫情前 '19Q4 | **1.26** | 0.95 | 1.50 | -7% | 14 |
+| 🦠 疫情爆發 '20H1 | -0.73 | -0.52 | -0.34 | -14% | 35 |
+| 🦠 疫後牛市 '20-'21 | **2.02** | 2.75 | 2.67 | -27% | 24 |
+| ⚔️ 烏俄戰爭 '22H1 | -2.53 | -2.22 | -2.21 | -25% | 27 |
+| 📉 升息衝擊 '22 | **-1.55** | -1.79 | -2.02 | **-28%** | 26 |
+| 🤖 AI 行情 '23-'24 | **2.37** | 2.58 | 2.55 | -15% | 16 |
+| 🏛️ 關稅前 '26Q1 | **1.25** | 2.38 | -3.50 | -12% | 26 |
+| 🏛️ 關稅衝擊 '26 | **5.12** | 4.02 | 1.22 | -12% | 23 |
+| 📊 近期 '26 | **5.12** | 4.02 | 2.12 | -12% | 21 |
+
+### 00981A 對標（共存期 2025-05 至今）
+
+| 期間 | SR v2 | 00981A | 差距 |
+|------|:---:|:---:|:---:|
+| 🏛️ 關稅前 | +52.5% | -1.0% | ✅ **+54%** |
+| 🏛️ 關稅衝擊 | +195.8% | +21.4% | ✅ **+174%** |
+| 📊 近期 | +195.8% | +35.0% | ✅ **+161%** |
+
+### v1.0 → v1.2 改善
+
+| 指標 | v1.0 | v1.2 | 改善 |
+|------|:---:|:---:|:---:|
+| 升息衝擊 MDD | -44.8% | **-27.8%** | ✅ +17.0% |
+| 烏俄戰爭 MDD | -31.7% | **-25.0%** | ✅ +6.7% |
+| 關稅衝擊 Sharpe | 4.83 | **5.12** | ✅ +6% |
+| 海嘯復甦 Sharpe | -0.08 | **+0.26** | ✅ 翻正 |
+| 近期 vs 00981A | +152.9% | **+160.9%** | ✅ 差距擴大 |
+
+---
+
+## v8.5 Momentum 策略（保留）
+
+### 績效總覽
 
 | 指標 | 值 | 說明 |
 |------|:---:|------|
@@ -15,48 +112,8 @@
 | **MDD** | **-14.2%** | Breadth Regime 精準捕捉中小型股市況 |
 | **Calmar** | **4.40** | 年化報酬/MDD |
 | **Profit Factor** | **1.74** | 總獲利/總虧損 |
-| **勝率** | **54.8%** | 562 筆交易 |
 
-### 雙 Benchmark 對比
-
-| | 策略 v8.4 | 0050 | 00981A |
-|---|:---:|:---:|:---:|
-| 全期年化 | **+63%** | +41% | N/A |
-| 全期 Sharpe | **2.43** | 1.79 | N/A |
-| 共存期總報酬 | **+135%** | +72% | +114% |
-| 共存期 Sharpe | **5.62** | 4.36 | 5.87 |
-| vs 0050 月勝率 | **64%** | — | — |
-| vs 00981A 月勝率 | 27% | — | — |
-
-> 策略在總報酬上全面跑贏兩個 benchmark。
-> 月勝率 vs 00981A 較低（27%），但策略靠大贏月（Oct +12%, Jan +27%）累積超額。
-
-### 演化歷程
-
-| 版本 | Sharpe | 年化 | MDD | Calmar | 說明 |
-|------|:------:|:----:|:---:|:------:|------|
-| v7 (lookahead) | 2.96 | +91% | -18% | 4.96 | ⚠️ 含 lookahead bias |
-| v8.1 (honest) | 1.95 | +61% | -30% | 2.02 | ✅ 修正 lookahead |
-| v8.2 (graduated) | 2.21 | +64% | -19% | 3.39 | ✅ + graduated regime |
-| v8.2 (sector cap) | 2.30 | +63% | -17% | 3.72 | ✅ + sector cap 60% |
-| v8.3 (gap-aware) | 2.33 | +58% | -16% | 3.68 | ✅ + gap-aware sizing |
-| **v8.4 (return opt)** | **2.40** | **+63%** | **-16%** | **4.00** | ✅ + sector 75% + regime floor 20% |
-| **v8.5 (breadth)** | **2.47** | **+63%** | **-14%** | **4.40** | ✅ + Breadth Regime + floor 10% |
-
-> v8.4→v8.5：Breadth Regime 用 Universe 內部寬度修正 regime，更精準捕捉中小型股市況。
-> Regime floor 從 30% 降至 10%，搭配 Breadth 精準度提升，弱勢時更積極減倉。
-
-### Monte Carlo 壓力測試（Block Bootstrap, 2000x, v8.2 honest）
-
-| 情境 | 最差 5% 報酬 | 最差 5% MDD | 中位數報酬 |
-|------|:----------:|:-----------:|:--------:|
-| 全體 (block=5) | +178.5% | -22.0% | +400.3% |
-| 保守 (勝率50%) | **+1.0%** | -44.6% | +135.0% |
-
-> ✅ 保守情境（勝率降至 50%）最差 5% 報酬仍為正，代表策略有足夠安全邊際。
-> 預期實盤 MDD：-13% ~ -22%，建議起始資金 ≥ 45 萬。
-
-## 策略公式
+### 策略公式
 
 ```
 每日訊號:
@@ -66,187 +123,77 @@
   4. 跳空 > 1.5×ATR 的進場日跳過
   5. Top-7 選股（相關性 > 0.8 的替換為不相關候選）
 
-Graduated Regime (v8.2):
-  - 大盤 > 60MA + > 20MA → 100% 曝險
-  - 大盤 > 60MA + < 20MA →  70% 曝險（轉弱）
-  - 大盤 < 60MA + > 20MA →  40% 曝險（轉強）
-  - 大盤 < 60MA + < 20MA →   0% 停止進場
-
-Gap-aware Entry Sizing (v8.3):
-  - gap < 0.5 ATR → 100% 倉位
-  - 0.5~1.0 ATR  →  75% 倉位（中跳空減倉）
-  - 1.0~1.5 ATR  →  50% 倉位（大跳空半倉）
-  - gap ≥ 1.5 ATR → 跳過（情緒極值）
-
-出場 (gap-aware):
-  - 停損: min(stop_price, open)  ← 隔夜跳空用開盤價
-  - 停利: max(tp_price, open)    ← 跳空有利用開盤價
-  - 時間: 20 個交易日強制出場
-
+出場 (gap-aware): ATR TP 4.0 / SL 3.0 + 20 天持倉
 成本: 買 0.1425% + 賣 0.4425% + 滑價 10bps
 ```
+
+---
 
 ## 快速開始
 
 ```bash
 pip install -r requirements.txt
 
-# v8 誠實回測 + 籌碼標注
+# ── v8.5 Momentum ──
 python ai_report.py --show-inst
 
-# 籌碼因子加權測試（建議累積 2 年數據後再啟用）
-python ai_report.py --inst-flow 0.5 --show-inst
+# ── Sector Rotation v2 ──
+python sector_rotation_report.py                          # 預設 1200 天
+python sector_rotation_report.py --start-date 2019-01-01  # 7 年回測
+python sector_rotation_report.py --compare                # vs 0050
 
-# Paper Trading v8
-python paper_trade.py signals --enrich    # 籌碼 + 新聞標注
-python paper_trade.py hardstop             # 組合 hard stop
-python paper_trade.py monthly              # 月報
+# ── 深度危機壓測 (11 段) ──
+python deep_crisis_test.py
 
-# Block Bootstrap 壓力測試
-python monte_carlo.py --runs 2000 --block-size 5
+# ── 驗證工具 ──
+python walk_forward.py                                    # OOS 穩定性
+python monte_carlo.py --runs 2000 --block-size 5          # Block Bootstrap
+python crisis_test.py                                     # 基礎危機壓測
+
+# ── Paper Trading ──
+python paper_trade.py signals --enrich
+python paper_trade.py hardstop
 ```
-
-## CLI 參數
-
-### 核心（已鎖定 — 50+ 組消融驗證）
-| 參數 | 預設值 | 說明 |
-|---|:---:|---|
-| `--tp-atr` | `4.0` | ATR 停利倍數 |
-| `--sl-atr` | `3.0` | ATR 停損倍數 |
-| `--top-k` | `7` | 每日最多進場股票數 |
-| `--hold-days` | `20` | 最大持倉交易日（12/15/25/30d 均劣） |
-| `--gap-filter` | `1.5` | 跳空過濾 ATR 倍數 |
-| `--universe-size` | `60` | 動態流動性 Universe 大小 |
-| `--regime-graduated` | `true` | 四段式曝險 (100/70/40/20%) |
-| `--regime-floor` | `0.10` | v8.5: 弱勢最低曝險 |
-| `--breadth-regime` | `true` | v8.5: 市場寬度修正 regime 判斷 |
-| `--sector-max-pct` | `0.75` | v8.4: 板塊分散上限（放寬允許集中） |
-| `--gap-aware-sizing` | `true` | v8.3: 跳空減倉 |
-| `--slippage` | `0.001` | 滑價 10bps |
-
-### 已驗證無效（理論水土不服 / 實務無效，已永久排除）
-
-> **「橘子與蘋果」**：我們進行了大量實證測試，證實許多歐美經典量化理論與台股市場結構（跳空、漲跌幅限制、群聚效應）並不相容。
-
-| 測試功能 / 理論 | 原理 / 預期 | 實際影響 | 失敗原因分析 |
-|------|------|------|------|
-| `--ml-weights` | LightGBM 預測權重 | Sharpe -55% | 因子與報酬間的非線性關係過擬合 |
-| `--residual-momentum` | 扣除 Beta 算殘差動能 | MDD 反向惡化 | 台股動能板塊群聚，扣 Beta 削弱了真實的產業動量 |
-| `--trend-quality` / FIP | Frog-in-Pan 平滑度 | Sharpe 跌至 1.77 | 懲罰了台股最肥美的「跳空鎖死」飆股起漲點 |
-| `Skip-month` | 美股 1 個月短線反轉 | Sharpe 跌至 1.64 | 台股有極強的強者恆強慣性，跳過最近一個月等於錯過主升段 |
-| `Absolute Mom Gate` | 個股 60 日絕對績效 > 0 | MDD 反向惡化 | 破壞了 Graduated Regime 底下的「大跌後初級反彈」右側買點 |
-| `Limit-Up Bonus` | 漲停鎖死次數加權 | Sharpe 跌至 2.26 | 鼓勵純追高，買在拉抬出貨的頂部 |
-| `Inst Flow Gate` | 近 20 日法人必須買超 | Sharpe 跌破 1.0 | 過度迷信法人，過濾掉 85% 由內資/主力拉抬的真正飆股 |
-| `--breakeven` / `--trailing`| 提早保本停利 | Sharpe 崩潰至 0.08 | 高勝率動能策略不能怕抱不住，太早走錯失後半段 |
-| `--vol-parity` | 波動率平價倉位 | MDD **暴增至 -56.4%** | 高波動飆股倉位太小→錯失主要利潤，交易量剩 111 筆 |
-| `--dd-pause-pct 0.10` | 10% 回撤暫停新倉 | MDD 反而惡化至 -21.1% | 暫停後錯過反彈，恢復後追高，節奏被打亂 |
-| `--dd-pause-pct 0.15` | 15% 回撤暫停新倉 | Sharpe 跌至 1.96 | 同上且更嚴重 |
-
-### 第三波消融：風控機制測試 (Risk Engineering)
-
-> 即使是「純資金管理」的改善嘗試，也無法戰勝原始 v8.4 設計。
-
-| 測試配置 | Sharpe | 年化報酬 | MDD | Calmar | 交易數 | 勝率 |
-|----------|:---:|:---:|:---:|:---:|:---:|:---:|
-| **v8.4 Baseline** | **2.38** | **+62.8%** | **-15.5%** | **4.06** | **562** | **61.1%** |
-| MDD Breaker 8% | 2.33 🔴 | +58.3% | -19.1% 🔴 | 3.04 🔴 | 516 | 58.3% |
-| MDD Breaker 10% | 2.22 🔴 | +57.0% | -21.1% 🔴 | 2.71 🔴 | 527 | 55.6% |
-| MDD Breaker 15% | 1.96 🔴 | +50.9% | -25.6% 🔴 | 1.99 🔴 | 531 | 52.8% |
-| Vol Parity | 0.59 ☠️ | +27.0% | -56.4% ☠️ | 0.48 ☠️ | 111 | 52.8% |
-| MDD10 + VolParity | 1.01 ☠️ | +41.3% | -38.1% ☠️ | 1.08 ☠️ | 93 | 52.8% |
-
-**結論**：MDD Breaker（回撤暫停新倉）與 Vol Parity（波動率平價部位）在台股動量策略中均產生**嚴重負面效果**。原因：
-- **MDD Breaker 的「暫停→恢復」節奏會破壞動量策略的連續性**。暫停時錯過底部反彈，恢復後市場已上漲追高進場。
-- **Vol Parity 讓高波動飆股倉位太小**。台股動量的利潤主要來自「高 ATR 飆股」。將它們的部位縮小到微不足道，等於自廢武功。
-
-### 第四波消融：全功能地毯式掃描 (19 組)
-
-> 將系統內所有未測試的功能（子策略、進場品質、參數微調）逐一打開測試。
-
-**19 組中 17 組敗北，2 組突破 Baseline：**
-
-| 測試配置 | Sharpe | 年化報酬 | MDD | Calmar | 勝率 | 結論 |
-|----------|:---:|:---:|:---:|:---:|:---:|:---:|
-| **v8.4 Baseline** | **2.38** | **+62.8%** | **-15.5%** | **4.06** | **61.1%** | 對照組 |
-| **🟢 Breadth Regime** | **2.44** | **+62.4%** | **-14.2%** | **4.40** | **58.3%** | **MDD 縮小 + Calmar 提升** |
-| **🟢 Breadth + Floor 0.10** | **2.47** | **+62.5%** | **-14.2%** | **4.40** | **58.3%** | **Sharpe 最高** |
-| Futures Hedge | 2.36 | +62.0% | -16.0% | 3.88 | 61.1% | 微降 |
-| Dynamic Risk | 2.33 | +57.3% | -18.1% | 3.17 | 61.1% | 有害 |
-| Volume Confirm | 2.07 | +51.0% | -22.6% | 2.26 | 63.9% | 有害 |
-| ConsecLoss 3/5 | 2.19 | +54.1% | -18.5% | 2.93 | 58.3% | 有害 |
-| Sector Cap 50% | 1.96 | +45.4% | -20.5% | 2.21 | 55.6% | 有害 |
-| Universe 40 | 2.02 | +51.9% | -23.2% | 2.24 | 58.3% | 有害 |
-| Universe 80 | 1.94 | +50.1% | -15.6% | 3.20 | 69.4% | 有害 |
-| TP5/SL2 | 1.14 | +30.8% | -36.5% | 0.84 | 50.0% | 災難 |
-| TP3/SL2 | 1.12 | +29.9% | -32.2% | 0.93 | 50.0% | 災難 |
-
-**🟢 Breadth Regime 為何有效？**
-它用 Universe 內部的**市場寬度**（多少比例的股票站上 20MA）來修正大盤 Regime 判斷。傳統 Regime 只看 0050，但 0050 會被台積電一檔的漲跌綁架。Breadth 則觀察整個流動性池的「健康程度」，更精準地反映中小型股的真實市況。
-
-## v8.1 回測誠實化 — Lookahead 修正
-
-### 修正 1：Regime Filter Lookahead（影響最大）
-```
-v7: market_close[date] > market_ma60[date]  ← 用同日收盤決定同日開盤進場
-v8: market_close[i-1] > market_ma60[i-1]    ← 只用昨日資訊
-```
-影響：Sharpe 2.96 → 1.95, MDD -18.4% → -30.0%（大盤轉弱時多了很多錯誤進場）
-
-### 修正 2：Volume Confirm Lookahead
-```
-v7: vol_df[ticker].iloc[i] > vol_ma20[i]    ← 用同日成交量
-v8: vol_df[ticker].iloc[i-1] > vol_ma20[i-1] ← 用昨日成交量
-```
-
-### 修正 3：Constructor Defaults 對齊
-```
-v7 backtester defaults: tp_atr=3.0, sl_atr=2.0, hold=30, gap=0, top_k=3
-v8 backtester defaults: tp_atr=4.0, sl_atr=3.0, hold=20, gap=1.5, top_k=5  ← 對齊 README
-```
-
-### 修正 4：Ablation Study 對齊
-```
-v7 ablation: tp_atr=3.0, sl_atr=1.5, days=800, top_k=3, no regime filter
-v8 ablation: tp_atr=4.0, sl_atr=3.0, days=1200, top_k=5, regime filter  ← 對齊 README
-```
-
-## v8 新功能 — 籌碼因子 + Paper Trading 強化
-
-### 三大法人籌碼整合
-- 數據來源: [tw-institutional-stocker](https://github.com/voidful/tw-institutional-stocker)
-- 因子: `three_inst_ratio_change_20`（20 日持股變化 %）
-- 當前狀態: **標注模式**（weight=0）— 報表中顯示但不影響選股分數
-- 未來規劃: 累積 2 年數據後做 ablation，決定是否加入評分公式
-
-### Paper Trading v8
-| 命令 | 說明 |
-|------|------|
-| `signals --enrich` | 信號 + 籌碼/新聞標注 |
-| `hardstop` | 組合權益保護 (soft -10% / hard -15%) |
-| `monthly` | 月度績效報告 (Markdown) |
-| `alert` | 回測回撤警報 |
 
 ## 專案結構
 
 ```
 tw_stocker/
-├── ai_report.py              # 主程式 + CLI + HTML 報表 (v8)
-├── sweep.py                  # 季度參數校準 + 劣化警報 + Telegram
-├── walk_forward.py           # Walk-Forward 穩定性驗證
-├── monte_carlo.py            # Block Bootstrap 壓力測試 v3
-├── paper_trade.py            # Paper Trading v8 + 籌碼標注 + 月報
+├── ai_report.py                  # v8.5 主程式 + CLI + HTML 報表
+├── sector_rotation_report.py     # 🆕 板塊輪動 v2 回測 + 報告
+├── deep_crisis_test.py           # 🆕 11 段歷史危機壓測 + 00981A
+├── crisis_test.py                # 基礎危機壓力測試
+├── walk_forward.py               # Anchored OOS 穩定性驗證 (v2)
+├── monte_carlo.py                # Equity-Curve Block Bootstrap (v3)
+├── sweep.py                      # 季度參數校準 + Telegram 警報
+├── paper_trade.py                # Paper Trading v8 + 月報
 ├── strategy/
-│   ├── ai_strategy.py        # 因子工程 (Mom×3 + Trend×1 + Inst×W)
-│   ├── event_backtest.py     # 事件驅動回測 + gap-aware fill + 風控
-│   ├── institutional_flow.py # 三大法人籌碼因子 (v8 新增)
-│   ├── news_sentiment.py     # 新聞情緒因子 (v8 新增)
-│   ├── risk_metrics.py       # 風險指標計算
-│   └── benchmark.py          # Benchmark (0050 / EW)
-├── artifacts/                # 每日 CSV + 月報
+│   ├── ai_strategy.py            # 因子工程 (Mom×3 + Trend×1)
+│   ├── event_backtest.py         # v8.5 事件驅動回測引擎
+│   ├── us_market.py              # 🆕 美股信號 (SPY/VIX/SOX)
+│   ├── sector_rotation_backtest.py # 🆕 板塊輪動回測引擎
+│   ├── sector_flow.py            # 板塊資金流分析
+│   ├── institutional_flow.py     # 三大法人籌碼因子
+│   ├── news_sentiment.py         # 新聞情緒因子
+│   ├── risk_metrics.py           # 風險指標計算
+│   └── benchmark.py              # Benchmark (0050 / EW)
+├── artifacts/                    # 每日 CSV + 月報
 ├── .github/workflows/
-│   └── update_ai_report.yml  # 每日 + 月報 + 季度自動執行 (v8)
-└── stock_report.html         # 完整交易報表 (v8)
+│   └── update_ai_report.yml      # 每日自動執行
+└── stock_report.html             # 完整交易報表
 ```
+
+## 壓力測試方法論
+
+> ⚠️ **Monte Carlo** (`monte_carlo.py`) 對每日組合報酬率做 equity-curve block bootstrap，
+> 保留了多檔同持、regime 縮放、gap sizing 等組合效應。但 bootstrap 仍假設日報酬的
+> 時序結構可以被隨機重排——在極端 regime 轉換時這不成立。結果應視為
+> **分布估計的參考**，不能直接當作實盤安全邊際。
+>
+> **OOS 穩定性** (`walk_forward.py`) 是固定參數的分段 OOS 測試（非 nested walk-forward）。
+>
+> **歷史危機壓測** (`deep_crisis_test.py`) 在 11 段歷史危機做完整回測，
+> 含金融海嘯、COVID、烏俄戰爭、升息、關稅衝擊，同時比較 v8.5 / SR v2 / 0050 / 00981A。
 
 ## 免責聲明
 

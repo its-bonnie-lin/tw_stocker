@@ -122,6 +122,9 @@ class EventDrivenBacktester:
                  dynamic_topk=False,
                  dynamic_gap_filter=False,
                  dynamic_corr_filter=False,
+                 sector_flow_tilt=False,
+                 tilt_strength=1.0,
+                 tilt_windows=None,
                  buy_cost=0.001425, sell_cost=0.004425):
         self.tp_pct = tp_pct
         self.sl_pct = sl_pct
@@ -168,6 +171,9 @@ class EventDrivenBacktester:
         self.dynamic_topk = dynamic_topk
         self.dynamic_gap_filter = dynamic_gap_filter
         self.dynamic_corr_filter = dynamic_corr_filter
+        self.sector_flow_tilt = sector_flow_tilt
+        self.tilt_strength = tilt_strength
+        self.tilt_windows = tilt_windows if tilt_windows else [10, 15, 20]
         self.buy_cost = buy_cost
         self.sell_cost = sell_cost
 
@@ -269,6 +275,22 @@ class EventDrivenBacktester:
                     print(f"   🌍 Macro Regime: VIX 已載入 ({len(self._vix_series)} 天)")
             except Exception as e:
                 print(f"   ⚠️ VIX 下載失敗: {e}")
+        # === Sector Flow Tilt：預計算板塊動量 ===
+        self._sector_flow_df = None
+        self._sector_composition = None
+        if self.sector_flow_tilt:
+            try:
+                from strategy.sector_flow import compute_sector_flow
+                self._sector_flow_df, self._sector_composition = compute_sector_flow(
+                    close_df, universe_mask, windows=self.tilt_windows
+                )
+                n_sectors = len(self._sector_composition)
+                print(f"   📊 Sector Flow Tilt: {n_sectors} 板塊, "
+                      f"窗口={self.tilt_windows}, 力度={self.tilt_strength}")
+            except Exception as e:
+                print(f"   ⚠️ Sector Flow Tilt 計算失敗: {e}")
+                self._sector_flow_df = None
+
         # 計算精確 ATR（如果使用 ATR 模式）
         if self.tp_sl_mode == 'atr':
             if atr_df is None:
@@ -815,7 +837,28 @@ class EventDrivenBacktester:
                     except Exception:
                         pass
 
-                selected = candidates[:min(effective_top_k, slots_available)]
+                # === Sector Flow Tilt：按板塊資金流分配 slot ===
+                if (self.sector_flow_tilt and self._sector_flow_df is not None
+                        and i - 1 >= 0):
+                    try:
+                        from strategy.sector_flow import get_sector_slots, select_with_sector_tilt
+                        day_sector_scores = self._sector_flow_df.iloc[i - 1]
+                        sector_slots = get_sector_slots(
+                            day_sector_scores,
+                            top_k=effective_top_k,
+                            tilt_strength=self.tilt_strength,
+                        )
+                        if sector_slots:
+                            selected = select_with_sector_tilt(
+                                candidates, sector_slots,
+                                effective_top_k, slots_available,
+                            )
+                        else:
+                            selected = candidates[:min(effective_top_k, slots_available)]
+                    except Exception:
+                        selected = candidates[:min(effective_top_k, slots_available)]
+                else:
+                    selected = candidates[:min(effective_top_k, slots_available)]
 
                 # 相關性過濾：去除與已選股/持倉高度相關的候選
                 # Dynamic correlation filter: 強勢 regime 放寬閾值

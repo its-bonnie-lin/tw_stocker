@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-Monte Carlo 壓力測試 v2
+Monte Carlo 壓力測試 v3 — Equity-Curve Bootstrap
 
-對歷史交易做 bootstrap 重採樣，估算策略在極端情境下的表現分布。
-新增 regime-aware 分析：分開統計多頭/空頭期交易表現。
+與 v2 的差異：
+- v2 對「單筆交易報酬」做 bootstrap，然後用固定 10% 倉位順序乘上去。
+  這丟掉了多檔同持、regime 曝險縮放、gap sizing、資金占用等所有組合效應。
+- v3 對「每日組合報酬率」做 block bootstrap，天然保留了上述所有效應，
+  因為每日報酬率已經是完整回測引擎跑出來的結果。
 
 使用方式:
-  python monte_carlo.py                # 預設 2000 次模擬
-  python monte_carlo.py --runs 5000    # 更精確
-  python monte_carlo.py --confidence 99  # 99% 信心區間
+  python monte_carlo.py                      # 預設 2000 次, block=20
+  python monte_carlo.py --runs 5000          # 更精確
+  python monte_carlo.py --block-size 10      # 較短區塊
+  python monte_carlo.py --legacy             # 舊版單筆 bootstrap (保留做比較)
 """
 
 import subprocess
@@ -17,26 +21,39 @@ import sys
 import argparse
 import random
 import statistics
+import csv
+import os
+import glob
 from datetime import datetime
 
+import pandas as pd
+import numpy as np
 
-def get_trades():
-    """從最新 trades CSV 取得交易列表（含日期）。"""
-    import csv
-    import os
-    import glob
 
-    csv_files = glob.glob('artifacts/trades_*.csv')
+def get_equity_curve():
+    """從最新 equity CSV 取得每日組合權益曲線。"""
+    csv_files = glob.glob('artifacts/equity_*.csv')
     if not csv_files:
-        print("📥 執行回測以取得交易數據...")
-        subprocess.run('python ai_report.py', shell=True, capture_output=True, text=True, timeout=180)
-        csv_files = glob.glob('artifacts/trades_*.csv')
+        print("📥 執行回測以取得權益曲線...")
+        subprocess.run('python3 ai_report.py', shell=True,
+                       capture_output=True, text=True, timeout=300)
+        csv_files = glob.glob('artifacts/equity_*.csv')
         if not csv_files:
-            print("❌ 無法取得交易數據")
+            print("❌ 無法取得權益曲線")
             sys.exit(1)
 
     latest = max(csv_files, key=os.path.getmtime)
     print(f"   讀取 {latest}...")
+    df = pd.read_csv(latest, index_col=0, parse_dates=True)
+    return df['Equity']
+
+
+def get_trades():
+    """從最新 trades CSV 取得交易列表（legacy 模式用）。"""
+    csv_files = glob.glob('artifacts/trades_*.csv')
+    if not csv_files:
+        return []
+    latest = max(csv_files, key=os.path.getmtime)
     trades = []
     with open(latest) as f:
         reader = csv.DictReader(f)
@@ -49,153 +66,245 @@ def get_trades():
                 })
             except (KeyError, ValueError):
                 continue
-
     return trades
 
 
-def simulate_equity(returns, initial=1_000_000, position_size=0.10):
-    """用隨機重採樣的交易序列模擬權益曲線。"""
-    equity = initial
-    peak = initial
-    max_dd = 0
+def equity_curve_bootstrap(daily_returns, n_runs, block_size=20,
+                           initial=1_000_000):
+    """
+    Block bootstrap 每日組合報酬率，模擬權益曲線分布。
 
-    for ret in returns:
-        trade_pnl = equity * position_size * ret
-        equity += trade_pnl
-        peak = max(peak, equity)
-        dd = (equity - peak) / peak
-        max_dd = min(max_dd, dd)
+    這保留了回測引擎的所有組合效應（多檔同持、regime、gap sizing 等），
+    因為每日報酬率已經是這些效應的結果。
 
-    total_return = (equity / initial - 1)
-    return total_return, max_dd, equity
+    Parameters
+    ----------
+    daily_returns : pd.Series or np.array
+        每日組合報酬率 (decimal, e.g. 0.01 = +1%)
+    n_runs : int
+        模擬次數
+    block_size : int
+        Block bootstrap 區塊大小 (天)
+    initial : float
+        初始資金
+
+    Returns
+    -------
+    dict with distribution statistics
+    """
+    rets = np.array(daily_returns)
+    n = len(rets)
+    all_total_returns = []
+    all_mdds = []
+    all_sharpes = []
+
+    for _ in range(n_runs):
+        # Block bootstrap: 隨機取 block_size 天的連續區塊，拼接到原長度
+        sample = []
+        while len(sample) < n:
+            start = random.randint(0, max(0, n - block_size))
+            sample.extend(rets[start:start + block_size])
+        sample = np.array(sample[:n])
+
+        # 計算模擬權益曲線
+        equity = initial * np.cumprod(1 + sample)
+        peak = np.maximum.accumulate(equity)
+        drawdown = (equity - peak) / peak
+
+        total_ret = equity[-1] / initial - 1
+        max_dd = drawdown.min()
+
+        # 模擬 Sharpe
+        sim_mean = sample.mean()
+        sim_std = sample.std()
+        if sim_std > 0:
+            sharpe = sim_mean / sim_std * np.sqrt(252)
+        else:
+            sharpe = 0
+
+        all_total_returns.append(total_ret)
+        all_mdds.append(max_dd)
+        all_sharpes.append(sharpe)
+
+    all_total_returns.sort()
+    all_mdds.sort()
+    all_sharpes.sort()
+
+    return {
+        'n_days': n,
+        'median_ret': np.median(all_total_returns),
+        'p5_ret': all_total_returns[int(n_runs * 0.05)],
+        'p25_ret': all_total_returns[int(n_runs * 0.25)],
+        'p75_ret': all_total_returns[int(n_runs * 0.75)],
+        'p95_ret': all_total_returns[int(n_runs * 0.95)],
+        'median_mdd': np.median(all_mdds),
+        'p5_mdd': all_mdds[int(n_runs * 0.05)],  # worst 5%
+        'p95_mdd': all_mdds[int(n_runs * 0.95)],  # best 5%
+        'median_sharpe': np.median(all_sharpes),
+        'p5_sharpe': all_sharpes[int(n_runs * 0.05)],
+    }
 
 
-def run_mc(returns, n_runs, label="", block_size=1):
-    """Run Monte Carlo and return stats dict."""
+def legacy_simulate(returns, n_runs, block_size=5, initial=1_000_000,
+                    position_size=0.10):
+    """
+    Legacy 模式：對單筆交易報酬做 bootstrap。
+
+    ⚠️ 這個模式有方法論缺陷（丟掉了組合效應），保留僅供對比。
+    """
     n = len(returns)
     all_returns = []
     all_mdds = []
 
     for _ in range(n_runs):
         if block_size <= 1:
-            # iid bootstrap (legacy)
             sample = random.choices(returns, k=n)
         else:
-            # Block bootstrap: 保留時序結構
             sample = []
             while len(sample) < n:
                 start = random.randint(0, max(0, n - block_size))
                 sample.extend(returns[start:start + block_size])
             sample = sample[:n]
-        ret, mdd, _ = simulate_equity(sample)
-        all_returns.append(ret)
-        all_mdds.append(mdd)
+
+        equity = initial
+        peak = initial
+        max_dd = 0
+        for ret in sample:
+            equity += equity * position_size * ret
+            peak = max(peak, equity)
+            dd = (equity - peak) / peak
+            max_dd = min(max_dd, dd)
+
+        all_returns.append(equity / initial - 1)
+        all_mdds.append(max_dd)
 
     all_returns.sort()
     all_mdds.sort()
 
     return {
-        'label': label,
-        'n': n,
+        'n_trades': n,
         'median_ret': statistics.median(all_returns),
         'p5_ret': all_returns[int(n_runs * 0.05)],
-        'p95_ret': all_returns[int(n_runs * 0.95)],
-        'median_mdd': statistics.median(all_mdds),
         'p5_mdd': all_mdds[int(n_runs * 0.05)],
+        'median_mdd': statistics.median(all_mdds),
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Monte Carlo 壓力測試 v3 (block bootstrap)')
-    parser.add_argument('--runs', type=int, default=2000, help='模擬次數 (預設 2000)')
-    parser.add_argument('--confidence', type=int, default=95, help='信心區間 (預設 95)')
-    parser.add_argument('--block-size', type=int, default=5, help='Block bootstrap 區塊大小 (預設 5 = 一週; 1 = iid)')
+    parser = argparse.ArgumentParser(
+        description='Monte Carlo 壓力測試 v3 — Equity-Curve Bootstrap'
+    )
+    parser.add_argument('--runs', type=int, default=2000,
+                        help='模擬次數 (預設 2000)')
+    parser.add_argument('--block-size', type=int, default=20,
+                        help='Block bootstrap 區塊大小-天 (預設 20 ≈ 1 個月)')
+    parser.add_argument('--legacy', action='store_true',
+                        help='也跑 legacy 單筆 bootstrap 做對比')
     args = parser.parse_args()
 
-    trades = get_trades()
-    returns = [t['return'] for t in trades]
-    n_trades = len(returns)
+    # === Equity-Curve Bootstrap ===
+    equity = get_equity_curve()
+    daily_returns = equity.pct_change().dropna()
+    n_days = len(daily_returns)
 
-    if n_trades < 30:
-        print(f"⚠️ 交易筆數 {n_trades} 太少")
-        sys.exit(1)
-
-    print(f"\n📊 Monte Carlo 壓力測試 v3 — {datetime.now().strftime('%Y-%m-%d')}")
-    print(f"   交易筆數: {n_trades}")
-    print(f"   模擬次數: {args.runs}")
-    print(f"   Block size: {args.block_size} ({'iid' if args.block_size <= 1 else f'{args.block_size}日區塊'})") 
-
-    # 原始序列
-    orig_ret, orig_mdd, _ = simulate_equity(returns)
-    print(f"\n📈 原始序列: 報酬 {orig_ret*100:+.1f}% | MDD {orig_mdd*100:.1f}%")
-
-    # === 全體 Monte Carlo ===
-    print(f"\n🎲 全體交易 Monte Carlo ({n_trades} 筆)...")
-    all_stats = run_mc(returns, args.runs, "全體", block_size=args.block_size)
-
-    # === Regime 分割 ===
-    # 用交易結果分：正報酬 vs 負報酬（模擬多頭/空頭 regime）
-    win_trades = [t['return'] for t in trades if t['return'] > 0]
-    loss_trades = [t['return'] for t in trades if t['return'] <= 0]
-
-    # 停利 vs 停損 vs 時間到期
-    tp_trades = [t['return'] for t in trades if t['reason'] == '停利']
-    sl_trades = [t['return'] for t in trades if t['reason'] == '停損']
-    time_trades = [t['return'] for t in trades if t['reason'] == '時間到期']
-
-    print(f"\n📊 交易分類:")
-    print(f"   獲利: {len(win_trades)} 筆 (平均 {statistics.mean(win_trades)*100:+.1f}%)")
-    print(f"   虧損: {len(loss_trades)} 筆 (平均 {statistics.mean(loss_trades)*100:+.1f}%)")
-    if tp_trades:
-        print(f"   停利: {len(tp_trades)} 筆 (平均 {statistics.mean(tp_trades)*100:+.1f}%)")
-    if sl_trades:
-        print(f"   停損: {len(sl_trades)} 筆 (平均 {statistics.mean(sl_trades)*100:+.1f}%)")
-    if time_trades:
-        print(f"   到期: {len(time_trades)} 筆 (平均 {statistics.mean(time_trades)*100:+.1f}%)")
-
-    # === 最差情境：只用虧損交易做 MC（熊市壓力測試）===
-    bear_stats = None
-    if len(loss_trades) >= 20:
-        print(f"\n🐻 熊市壓力測試 (僅虧損交易 {len(loss_trades)} 筆)...")
-        bear_stats = run_mc(loss_trades, args.runs, "熊市", block_size=max(1, args.block_size // 2))
-
-    # === 保守情境：50% 獲利 + 50% 虧損（降低勝率）===
-    mixed = loss_trades + random.choices(win_trades, k=len(loss_trades))
-    print(f"\n⚖️ 保守情境 (勝率降至 50%, {len(mixed)} 筆)...")
-    conservative_stats = run_mc(mixed, args.runs, "保守", block_size=args.block_size)
-
-    # === 輸出報告 ===
-    tail = (100 - args.confidence) / 100
+    # 原始績效
+    orig_total_ret = (equity.iloc[-1] / equity.iloc[0] - 1) * 100
+    orig_peak = equity.cummax()
+    orig_mdd = ((equity - orig_peak) / orig_peak).min() * 100
+    orig_sharpe = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
 
     print(f"\n{'='*70}")
-    print(f"{'情境':<12s} | {'筆數':>4s} | {'最差 5% 報酬':>12s} | {'中位數報酬':>10s} | {'最差 5% MDD':>11s}")
+    print(f"📊 Monte Carlo 壓力測試 v3 — {datetime.now().strftime('%Y-%m-%d')}")
+    print(f"{'='*70}")
+    print(f"   方法：Equity-Curve Block Bootstrap")
+    print(f"   資料：{n_days} 個交易日的每日組合報酬率")
+    print(f"   區塊大小：{args.block_size} 天 (保留時序自相關)")
+    print(f"   模擬次數：{args.runs}")
+    print()
+    print(f"   ⚠️  方法論說明：")
+    print(f"      本工具對已完成回測的「每日組合報酬率」做 block bootstrap。")
+    print(f"      每日報酬率已包含多檔同持、regime 曝險縮放、gap-aware sizing")
+    print(f"      等所有組合效應。但 bootstrap 仍假設日報酬的時序結構")
+    print(f"      可以被隨機重排，這在極端 regime 轉換時可能不成立。")
+    print()
+
+    print(f"📈 原始回測結果:")
+    print(f"   總報酬: {orig_total_ret:+.1f}%  MDD: {orig_mdd:.1f}%  "
+          f"Sharpe: {orig_sharpe:.2f}")
+
+    # Run equity-curve bootstrap
+    print(f"\n🎲 Equity-Curve Bootstrap ({args.runs} 次)...")
+    ec_stats = equity_curve_bootstrap(
+        daily_returns, args.runs,
+        block_size=args.block_size,
+        initial=float(equity.iloc[0]),
+    )
+
+    print(f"\n{'='*70}")
+    print(f"{'指標':<20s} | {'最差5%':>10s} | {'25%':>10s} | "
+          f"{'中位數':>10s} | {'75%':>10s} | {'最好5%':>10s}")
     print(f"{'-'*70}")
-
-    for s in [all_stats, conservative_stats, bear_stats]:
-        if s is None:
-            continue
-        print(f"{s['label']:<12s} | {s['n']:>4d} | {s['p5_ret']*100:>+10.1f}% | {s['median_ret']*100:>+8.1f}% | {s['p5_mdd']*100:>9.1f}%")
-
+    print(f"{'總報酬':<20s} | {ec_stats['p5_ret']*100:>+9.1f}% | "
+          f"{ec_stats['p25_ret']*100:>+9.1f}% | {ec_stats['median_ret']*100:>+9.1f}% | "
+          f"{ec_stats['p75_ret']*100:>+9.1f}% | {ec_stats['p95_ret']*100:>+9.1f}%")
+    print(f"{'MDD':<20s} | {ec_stats['p5_mdd']*100:>9.1f}% | "
+          f"{'—':>10s} | {ec_stats['median_mdd']*100:>9.1f}% | "
+          f"{'—':>10s} | {ec_stats['p95_mdd']*100:>9.1f}%")
+    print(f"{'Sharpe (年化)':<20s} | {ec_stats['p5_sharpe']:>10.2f} | "
+          f"{'—':>10s} | {ec_stats['median_sharpe']:>10.2f} | "
+          f"{'—':>10s} | {'—':>10s}")
     print(f"{'='*70}")
 
-    # 風險評估
+    # Risk assessment
     print(f"\n📊 風險評估:")
-    worst_mdd = all_stats['p5_mdd']
-    if abs(worst_mdd) < 0.22:
-        print(f"   ✅ 全體最差 5% MDD = {worst_mdd*100:.1f}% < -22%，風險可控")
-    else:
-        print(f"   ⚠️ 全體最差 5% MDD = {worst_mdd*100:.1f}%，需注意")
+    worst_mdd = ec_stats['p5_mdd']
+    worst_ret = ec_stats['p5_ret']
+    median_sharpe = ec_stats['median_sharpe']
 
-    if conservative_stats['p5_ret'] > 0:
-        print(f"   ✅ 保守情境（勝率50%）最差 5% 報酬仍為正 ({conservative_stats['p5_ret']*100:+.1f}%)")
+    if worst_ret > 0:
+        print(f"   ✅ 最差 5% 總報酬仍為正 ({worst_ret*100:+.1f}%)")
     else:
-        print(f"   ⚠️ 保守情境最差 5% 報酬為負 ({conservative_stats['p5_ret']*100:+.1f}%)")
+        print(f"   ⚠️  最差 5% 總報酬為負 ({worst_ret*100:+.1f}%)")
 
-    # 實盤建議
+    if abs(worst_mdd) < 0.25:
+        print(f"   ✅ 最差 5% MDD = {worst_mdd*100:.1f}% (< -25%)")
+    elif abs(worst_mdd) < 0.40:
+        print(f"   ⚠️  最差 5% MDD = {worst_mdd*100:.1f}% (-25% ~ -40%)")
+    else:
+        print(f"   🚨 最差 5% MDD = {worst_mdd*100:.1f}% (> -40%，嚴重風險)")
+
+    print(f"   {'✅' if median_sharpe > 1.5 else '⚠️'} "
+          f"中位數 Sharpe = {median_sharpe:.2f}")
+
+    # Practical suggestions
     print(f"\n💡 實盤建議:")
-    print(f"   預期 MDD: {all_stats['median_mdd']*100:.1f}% ~ {worst_mdd*100:.1f}%")
-    suggested = 100000 / abs(worst_mdd) if worst_mdd != 0 else 100000
-    print(f"   建議起始資金: ≥ {suggested:,.0f} 元")
+    suggested_capital = 100_000 / abs(worst_mdd) if worst_mdd != 0 else 1_000_000
+    print(f"   預期 MDD 範圍: {ec_stats['median_mdd']*100:.1f}% ~ {worst_mdd*100:.1f}%")
+    print(f"   建議起始資金:  ≥ {suggested_capital:,.0f} 元")
+    print(f"   (以「最差 5% MDD 時仍保有 10 萬緩衝」計算)")
+
+    # === Legacy comparison (optional) ===
+    if args.legacy:
+        print(f"\n{'='*70}")
+        print(f"⚠️  Legacy 模式比較（單筆交易 bootstrap — 有方法論缺陷）")
+        print(f"{'='*70}")
+        trades = get_trades()
+        if trades:
+            returns = [t['return'] for t in trades]
+            print(f"   交易筆數: {len(returns)}")
+
+            legacy_stats = legacy_simulate(
+                returns, args.runs, block_size=5
+            )
+            print(f"   Legacy 最差 5% 報酬: {legacy_stats['p5_ret']*100:+.1f}%")
+            print(f"   Legacy 最差 5% MDD:  {legacy_stats['p5_mdd']*100:.1f}%")
+            print(f"   Legacy 中位數報酬:   {legacy_stats['median_ret']*100:+.1f}%")
+            print()
+            print(f"   ⚠️  Legacy 模式用固定 10% 倉位順序乘上去，")
+            print(f"      丟掉了多檔同持、regime 縮放、資金占用等組合效應。")
+            print(f"      結果通常比 Equity-Curve 模式更樂觀（虛假安全感）。")
+        else:
+            print("   ❌ 無交易數據")
 
 
 if __name__ == '__main__':

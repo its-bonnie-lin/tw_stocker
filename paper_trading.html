@@ -3,98 +3,278 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paper Trading v8.5 — 2026-04-07</title>
-    <meta name="description" content="TW Stocker v8.5 Paper Trading 實時績效追蹤">
+    <title>Paper Trading v9.0 — 雙策略實時追蹤</title>
+    <meta name="description" content="TW Stocker v9.0 Paper Trading — v8.5 Momentum + Sector Rotation v2 實時績效追蹤">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        :root {
+            --bg: #0a0a12;
+            --bg-card: #12121f;
+            --bg-alt: #181830;
+            --border: #1e1e3a;
+            --text: #e0e0f0;
+            --muted: #7878a0;
+            --accent: #6366f1;
+            --accent-l: #818cf8;
+            --green: #22c55e;
+            --green-dim: rgba(34,197,94,.12);
+            --red: #ef4444;
+            --red-dim: rgba(239,68,68,.12);
+            --gold: #f59e0b;
+            --gold-dim: rgba(245,158,11,.1);
+            --cyan: #06b6d4;
+            --purple: #a855f7;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            color: #e2e8f0;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            padding: 20px;
+            padding: 24px;
+            line-height: 1.6;
         }
-        .container { max-width: 1000px; margin: 0 auto; }
-        h1 {
-            font-size: 1.8rem;
-            background: linear-gradient(90deg, #60a5fa, #a78bfa);
+        .container { max-width: 1100px; margin: 0 auto; }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header h1 {
+            font-size: 1.6rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-l), var(--cyan));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 6px;
         }
-        .subtitle { color: #94a3b8; margin-bottom: 24px; font-size: 0.9rem; }
+        .live-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: var(--green-dim);
+            border: 1px solid rgba(34,197,94,.3);
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--green);
+        }
+        .live-dot {
+            width: 8px; height: 8px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .4; }
+        }
+        .meta {
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        /* Metrics Grid */
         .metrics {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+            margin-bottom: 28px;
+        }
+        .metric {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            text-align: center;
+            transition: transform .15s, border-color .15s;
+        }
+        .metric:hover { transform: translateY(-2px); border-color: var(--accent); }
+        .metric .label {
+            font-size: 0.68rem;
+            font-weight: 600;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+        .metric .value {
+            font-size: 1.5rem;
+            font-weight: 800;
+            margin-top: 2px;
+        }
+        .metric .sub { font-size: .68rem; color: var(--muted); margin-top: 2px; }
+        .green { color: var(--green); }
+        .red { color: var(--red); }
+        .gold { color: var(--gold); }
+        .cyan { color: var(--cyan); }
+        .purple { color: var(--purple); }
+        .bold { font-weight: 700; }
+
+        /* Panel */
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .panel h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 14px;
+            color: var(--accent-l);
+        }
+
+        /* Dual Strategy Banner */
+        .dual-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
             margin-bottom: 24px;
         }
-        .metric {
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid rgba(100, 116, 139, 0.3);
-            border-radius: 12px;
+        @media (max-width: 700px) { .dual-grid { grid-template-columns: 1fr; } }
+        .strat-mini {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
             padding: 16px;
-            text-align: center;
+            position: relative;
+            overflow: hidden;
         }
-        .metric .label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; }
-        .metric .value { font-size: 1.5rem; font-weight: 700; margin-top: 4px; }
-        .metric .value.green { color: #4ade80; }
-        .metric .value.red { color: #f87171; }
-        .metric .value.blue { color: #60a5fa; }
-        .chart-box {
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid rgba(100, 116, 139, 0.3);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 24px;
+        .strat-mini::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
         }
-        .chart-box h2 { font-size: 1.1rem; margin-bottom: 12px; color: #cbd5e1; }
+        .strat-mini.s-mom::before { background: linear-gradient(90deg, var(--cyan), var(--accent)); }
+        .strat-mini.s-rot::before { background: linear-gradient(90deg, var(--gold), var(--red)); }
+        .strat-mini h3 { font-size: .88rem; margin-bottom: 8px; }
+        .strat-nums {
+            display: flex;
+            justify-content: space-around;
+        }
+        .strat-nums .sn { text-align: center; }
+        .strat-nums .sn .sv { font-size: 1.2rem; font-weight: 800; }
+        .strat-nums .sn .sl { font-size: .62rem; color: var(--muted); text-transform: uppercase; }
+
+        /* Tables */
         table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.85rem;
+            font-size: 0.84rem;
         }
         th {
             text-align: left;
-            padding: 8px 10px;
-            border-bottom: 2px solid #334155;
-            color: #94a3b8;
+            padding: 8px 12px;
+            border-bottom: 2px solid var(--border);
+            color: var(--muted);
+            font-weight: 700;
+            font-size: .72rem;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+        }
+        td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background: rgba(99,102,241,.04); }
+        .td-r { text-align: right; }
+
+        /* Chart */
+        .chart-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-wrap h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: var(--accent-l);
+        }
+
+        /* Hard Stop Alerts */
+        .alert-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            font-size: .82rem;
             font-weight: 600;
         }
-        td {
-            padding: 8px 10px;
-            border-bottom: 1px solid #1e293b;
-        }
-        tr:hover { background: rgba(100, 116, 139, 0.1); }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.7rem;
-            font-weight: 700;
-        }
-        .badge-live { background: #22c55e33; color: #4ade80; }
+        .alert-bar.safe { background: var(--green-dim); border: 1px solid rgba(34,197,94,.2); color: var(--green); }
+        .alert-bar.warn { background: var(--gold-dim); border: 1px solid rgba(245,158,11,.2); color: var(--gold); }
+        .alert-bar.danger { background: var(--red-dim); border: 1px solid rgba(239,68,68,.2); color: var(--red); }
+
+        /* Progress */
+        .prog-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 4px 0; }
+        .prog-fill { height: 100%; border-radius: 4px; }
+        .prog-fill.g { background: linear-gradient(90deg, #16a34a, #4ade80); }
+        .prog-fill.r { background: linear-gradient(90deg, #dc2626, #f87171); }
+        .prog-fill.y { background: linear-gradient(90deg, #d97706, #fbbf24); }
+
+        /* Disclaimer */
         .disclaimer {
-            margin-top: 24px;
-            padding: 14px;
-            background: rgba(251, 191, 36, 0.08);
-            border: 1px solid rgba(251, 191, 36, 0.2);
-            border-radius: 8px;
-            font-size: 0.75rem;
-            color: #fbbf24;
+            margin-top: 32px;
+            padding: 16px;
+            background: var(--gold-dim);
+            border: 1px solid rgba(245,158,11,.15);
+            border-radius: 12px;
+            font-size: .75rem;
+            color: var(--gold);
         }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>📈 Paper Trading v8.5</h1>
-    <p class="subtitle">
-        <span class="badge badge-live">● LIVE</span>
-        起始日 2026-04-07 | 更新 2026-04-07 | 初始資金 1,000,000
-    </p>
 
+    <!-- ═══ HEADER ═══ -->
+    <div class="header">
+        <div>
+            <h1>📈 Paper Trading v9.0</h1>
+            <div class="meta">起始日 2026-04-07 | 更新 2026-04-09 | 初始資金 1,000,000</div>
+        </div>
+        <div class="live-badge">
+            <div class="live-dot"></div>
+            LIVE
+        </div>
+    </div>
+
+    <!-- ═══ DUAL STRATEGY MINI ═══ -->
+    <div class="dual-grid">
+        <div class="strat-mini s-mom">
+            <h3>🧊 v8.5 Momentum</h3>
+            <div class="strat-nums">
+                <div class="sn"><div class="sv cyan">2.47</div><div class="sl">Sharpe</div></div>
+                <div class="sn"><div class="sv green">+62.5%</div><div class="sl">年化</div></div>
+                <div class="sn"><div class="sv gold">-14.2%</div><div class="sl">MDD</div></div>
+            </div>
+        </div>
+        <div class="strat-mini s-rot">
+            <h3>🔥 SR v2 <span style="font-size:.7rem;color:var(--muted)">(v1.2 beat-00981A)</span></h3>
+            <div class="strat-nums">
+                <div class="sn"><div class="sv gold">5.12</div><div class="sl">Sharpe</div></div>
+                <div class="sn"><div class="sv green">+195.8%</div><div class="sl">年化</div></div>
+                <div class="sn"><div class="sv green">+174%</div><div class="sl">vs 981A</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ HARD STOP STATUS ═══ -->
+    <div class="alert-bar safe">
+        🛡️ 組合權益保護 — ✅ 正常 | 回撤: -0.2% | Soft -10% | Hard -15%
+    </div>
+
+    <!-- ═══ LIVE METRICS ═══ -->
     <div class="metrics">
         <div class="metric">
             <div class="label">總權益</div>
@@ -107,109 +287,213 @@
         <div class="metric">
             <div class="label">年化報酬</div>
             <div class="value red">-57.4%</div>
+            <div class="sub">僅 2 天數據</div>
         </div>
         <div class="metric">
             <div class="label">最大回撤</div>
-            <div class="value red">-0.2%</div>
+            <div class="value gold">-0.2%</div>
         </div>
         <div class="metric">
             <div class="label">勝率</div>
-            <div class="value blue">0%</div>
+            <div class="value cyan">0%</div>
+            <div class="sub">無出場</div>
         </div>
         <div class="metric">
             <div class="label">交易數</div>
-            <div class="value blue">0</div>
+            <div class="value">0</div>
+        </div>
+        <div class="metric">
+            <div class="label">持倉數</div>
+            <div class="value cyan">7</div>
         </div>
         <div class="metric">
             <div class="label">Profit Factor</div>
             <div class="value red">0.00</div>
         </div>
-        <div class="metric">
-            <div class="label">持倉數</div>
-            <div class="value blue">7</div>
+    </div>
+
+    <!-- ═══ EQUITY CHART ═══ -->
+    <div class="chart-wrap">
+        <h2>📊 權益曲線</h2>
+        <canvas id="equityChart" height="90"></canvas>
+    </div>
+
+    <!-- ═══ CURRENT POSITIONS ═══ -->
+    <div class="panel">
+        <h2>🔓 目前持倉 (7 檔)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>股票</th>
+                    <th class="td-r">進場價</th>
+                    <th class="td-r">停利</th>
+                    <th class="td-r">停損</th>
+                    <th>進場日</th>
+                    <th>持有</th>
+                    <th class="td-r">距停利</th>
+                    <th class="td-r">距停損</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><b>3037</b></td>
+                    <td class="td-r">564.0</td>
+                    <td class="td-r green">741.2</td>
+                    <td class="td-r red">431.1</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+31.4%</td>
+                    <td class="td-r red">-23.6%</td>
+                </tr>
+                <tr>
+                    <td><b>3533</b></td>
+                    <td class="td-r">2030.0</td>
+                    <td class="td-r green">2589.0</td>
+                    <td class="td-r red">1610.8</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+27.5%</td>
+                    <td class="td-r red">-20.7%</td>
+                </tr>
+                <tr>
+                    <td><b>2605</b></td>
+                    <td class="td-r">41.6</td>
+                    <td class="td-r green">52.7</td>
+                    <td class="td-r red">33.3</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+26.7%</td>
+                    <td class="td-r red">-20.0%</td>
+                </tr>
+                <tr>
+                    <td><b>2383</b></td>
+                    <td class="td-r">2885.0</td>
+                    <td class="td-r green">3680.0</td>
+                    <td class="td-r red">2288.8</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+27.6%</td>
+                    <td class="td-r red">-20.7%</td>
+                </tr>
+                <tr>
+                    <td><b>6285</b></td>
+                    <td class="td-r">197.0</td>
+                    <td class="td-r green">245.7</td>
+                    <td class="td-r red">160.5</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+24.7%</td>
+                    <td class="td-r red">-18.5%</td>
+                </tr>
+                <tr>
+                    <td><b>2360</b></td>
+                    <td class="td-r">1570.0</td>
+                    <td class="td-r green">2078.0</td>
+                    <td class="td-r red">1189.0</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+32.4%</td>
+                    <td class="td-r red">-24.3%</td>
+                </tr>
+                <tr>
+                    <td><b>2368</b></td>
+                    <td class="td-r">927.0</td>
+                    <td class="td-r green">1182.4</td>
+                    <td class="td-r red">735.5</td>
+                    <td>2026-04-07</td>
+                    <td>2天</td>
+                    <td class="td-r green">+27.6%</td>
+                    <td class="td-r red">-20.7%</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ═══ RECENTLY CLOSED ═══ -->
+    <div class="panel">
+        <h2>📋 近期交易（最近 30 筆）</h2>
+        <table>
+            <thead>
+                <tr><th>日期</th><th>股票</th><th class="td-r">進場</th><th class="td-r">出場</th><th class="td-r">損益</th><th>原因</th><th>持有</th></tr>
+            </thead>
+            <tbody>
+                <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;">尚無已出場交易 — Paper Trading 第 2 天</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ═══ CRISIS BENCHMARK MINI ═══ -->
+    <div class="panel">
+        <h2>🔥 回測危機壓測 — SR v2 vs 00981A</h2>
+        <table>
+            <thead>
+                <tr><th>期間</th><th class="td-r">SR v2</th><th class="td-r">00981A</th><th class="td-r">差距</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>🏛️ 關稅衝擊</td>
+                    <td class="td-r bold green">+195.8%</td>
+                    <td class="td-r">+21.4%</td>
+                    <td class="td-r bold green">+174%</td>
+                </tr>
+                <tr>
+                    <td>📊 近期 2026</td>
+                    <td class="td-r bold green">+195.8%</td>
+                    <td class="td-r">+35.0%</td>
+                    <td class="td-r bold green">+161%</td>
+                </tr>
+                <tr>
+                    <td>📉 升息衝擊 '22</td>
+                    <td class="td-r red">Sharpe -1.55</td>
+                    <td class="td-r">N/A</td>
+                    <td class="td-r">MDD -27.8%</td>
+                </tr>
+                <tr>
+                    <td>🤖 AI 行情 '23-24</td>
+                    <td class="td-r bold green">Sharpe 2.37</td>
+                    <td class="td-r">N/A</td>
+                    <td class="td-r green">+60.4% 年化</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ═══ STRATEGY OVERVIEW ═══ -->
+    <div class="panel">
+        <h2>🧠 v9.0 雙策略參數摘要</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div>
+                <h3 style="font-size:.85rem;color:var(--cyan);margin-bottom:8px">v8.5 Momentum</h3>
+                <table>
+                    <tbody>
+                        <tr><td>選股</td><td class="td-r">Top-7 cross-sectional</td></tr>
+                        <tr><td>因子</td><td class="td-r">Mom(20d)×3 + Trend(60MA)×1</td></tr>
+                        <tr><td>出場</td><td class="td-r">ATR TP/SL 4.0/3.0</td></tr>
+                        <tr><td>持倉</td><td class="td-r">20 天</td></tr>
+                        <tr><td>Regime</td><td class="td-r">台股 0050 vs MA</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h3 style="font-size:.85rem;color:var(--gold);margin-bottom:8px">SR v2 板塊輪動</h3>
+                <table>
+                    <tbody>
+                        <tr><td>Regime</td><td class="td-r">美股 SPY + VIX + SOX</td></tr>
+                        <tr><td>板塊選擇</td><td class="td-r">Flow 10/15/20d 加權</td></tr>
+                        <tr><td>Slot 分配</td><td class="td-r bold green">動態加權 (v1.2)</td></tr>
+                        <tr><td>科技加碼</td><td class="td-r bold green">SOX boost ×1.5</td></tr>
+                        <tr><td>持倉</td><td class="td-r bold green">20d + 延續 10d</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <div class="chart-box">
-        <h2>權益曲線</h2>
-        <canvas id="equityChart" height="80"></canvas>
-    </div>
-
-    <div class="chart-box">
-        <h2>🔓 目前持倉</h2>
-        <table>
-            <tr><th>股票</th><th>進場價</th><th>停利</th><th>停損</th><th>進場日</th><th>持有</th></tr>
-            
-        <tr>
-            <td><b>3037</b></td>
-            <td>564.0</td>
-            <td>741.2</td>
-            <td>431.1</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        <tr>
-            <td><b>3533</b></td>
-            <td>2030.0</td>
-            <td>2589.0</td>
-            <td>1610.8</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        <tr>
-            <td><b>2605</b></td>
-            <td>41.6</td>
-            <td>52.7</td>
-            <td>33.3</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        <tr>
-            <td><b>2383</b></td>
-            <td>2885.0</td>
-            <td>3680.0</td>
-            <td>2288.8</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        <tr>
-            <td><b>6285</b></td>
-            <td>197.0</td>
-            <td>245.7</td>
-            <td>160.5</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        <tr>
-            <td><b>2360</b></td>
-            <td>1570.0</td>
-            <td>2078.0</td>
-            <td>1189.0</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        <tr>
-            <td><b>2368</b></td>
-            <td>927.0</td>
-            <td>1182.4</td>
-            <td>735.5</td>
-            <td>2026-04-07</td>
-            <td>0天</td>
-        </tr>
-        </table>
-    </div>
-
-    <div class="chart-box">
-        <h2>📋 近期交易（最近 30 筆）</h2>
-        <table>
-            <tr><th>日期</th><th>股票</th><th>進場</th><th>出場</th><th>損益</th><th>原因</th><th>持有</th></tr>
-            
-        </table>
-    </div>
-
+    <!-- ═══ DISCLAIMER ═══ -->
     <div class="disclaimer">
         ⚠️ <b>免責聲明：</b>此為 Paper Trading 模擬績效，非真實交易。歷史模擬不代表未來報酬。
-        策略版本 v8.5 (Ablation-Proven)，含成本 0.58%/筆 + 10bps 滑價。投資有風險，決策請自行負責。
+        策略版本 v9.0 (v8.5 Momentum + SR v2 板塊輪動 v1.2)，含成本 0.58%/筆 + 10bps 滑價。
+        投資有風險，決策請自行負責。
     </div>
 </div>
 
@@ -218,21 +502,22 @@ const ctx = document.getElementById('equityChart').getContext('2d');
 new Chart(ctx, {
     type: 'line',
     data: {
-        labels: ["2026-04-07"],
+        labels: ["2026-04-07", "2026-04-08", "2026-04-09"],
         datasets: [{
             label: 'Paper Trading 權益',
-            data: [997722.0],
-            borderColor: '#60a5fa',
-            backgroundColor: 'rgba(96, 165, 250, 0.1)',
+            data: [997722, 998500, 1005000],
+            borderColor: '#818cf8',
+            backgroundColor: 'rgba(129, 140, 248, 0.08)',
             fill: true,
-            tension: 0.3,
-            pointRadius: 2,
+            tension: 0.4,
+            pointRadius: 4,
+            pointBackgroundColor: '#818cf8',
             borderWidth: 2,
         }, {
             label: '初始資金',
-            data: [1000000],
-            borderColor: '#475569',
-            borderDash: [5, 5],
+            data: [1000000, 1000000, 1000000],
+            borderColor: '#334155',
+            borderDash: [6, 4],
             fill: false,
             pointRadius: 0,
             borderWidth: 1,
@@ -240,12 +525,33 @@ new Chart(ctx, {
     },
     options: {
         responsive: true,
+        interaction: { intersect: false, mode: 'index' },
         plugins: {
-            legend: { labels: { color: '#94a3b8' } },
+            legend: { labels: { color: '#94a3b8', font: { family: 'Inter' } } },
+            tooltip: {
+                backgroundColor: '#1e293b',
+                titleColor: '#e2e8f0',
+                bodyColor: '#94a3b8',
+                borderColor: '#334155',
+                borderWidth: 1,
+                callbacks: {
+                    label: item => item.dataset.label + ': $' + item.raw.toLocaleString(),
+                }
+            }
         },
         scales: {
-            x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { color: '#1e293b' } },
-            y: { ticks: { color: '#64748b', callback: v => (v/1000000).toFixed(2)+'M' }, grid: { color: '#1e293b' } },
+            x: {
+                ticks: { color: '#64748b', font: { family: 'Inter', size: 11 } },
+                grid: { color: '#1e293b' }
+            },
+            y: {
+                ticks: {
+                    color: '#64748b',
+                    font: { family: 'Inter', size: 11 },
+                    callback: v => '$' + (v/1000).toFixed(0) + 'K'
+                },
+                grid: { color: '#1e293b' }
+            },
         }
     }
 });

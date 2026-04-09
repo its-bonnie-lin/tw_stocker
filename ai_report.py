@@ -1358,6 +1358,14 @@ def parse_args():
         '--days', type=int, default=1200,
         help='歷史回測天數 (預設: 1200)'
     )
+    parser.add_argument(
+        '--start-date', type=str, default=None,
+        help='明確指定回測起始日期 (YYYY-MM-DD，優先於 --days)'
+    )
+    parser.add_argument(
+        '--end-date', type=str, default=None,
+        help='明確指定回測結束日期 (YYYY-MM-DD，預設為今天)'
+    )
 
     # 結構性功能
     parser.add_argument(
@@ -1503,6 +1511,18 @@ def parse_args():
         '--dynamic-corr-filter', action='store_true',
         help='動態相關性過濾：強勢 Regime 放寬至 0.85'
     )
+    parser.add_argument(
+        '--sector-flow-tilt', action='store_true',
+        help='啟用板塊資金流傾斜：用 10/15/20 天動量追蹤板塊資金流向，動態分配 Top-K 配額'
+    )
+    parser.add_argument(
+        '--tilt-strength', type=float, default=1.0,
+        help='板塊傾斜力度 (0.0=均分, 1.0=全力傾斜, 預設 1.0)'
+    )
+    parser.add_argument(
+        '--tilt-windows', type=str, default='10,15,20',
+        help='板塊動量計算窗口 (逗號分隔, 預設 10,15,20)'
+    )
 
     return parser.parse_args()
 
@@ -1531,11 +1551,17 @@ def main():
     print(f"   股池: {mode_str}")
     print(f"   TP/SL: {tp_sl_str}{trailing_str}  Top-K: {args.top_k}  持倉上限: {args.hold_days} 天")
     print(f"   成本: {cost_str}")
-    print(f"   回測天數: {args.days}")
+    if args.start_date:
+        print(f"   回測期間: {args.start_date} → {args.end_date or '今天'}")
+    else:
+        print(f"   回測天數: {args.days}")
     print("=" * 60)
 
     # Phase 1: 資料下載
-    close_df, open_df, high_df, low_df, vol_df = fetch_panel_data(tickers, days=args.days)
+    close_df, open_df, high_df, low_df, vol_df = fetch_panel_data(
+        tickers, days=args.days,
+        start_date=args.start_date, end_date=args.end_date,
+    )
 
     # Phase 2: 動態 Universe 或靜態池
     if use_dynamic:
@@ -1622,6 +1648,9 @@ def main():
         dynamic_topk=args.dynamic_topk,
         dynamic_gap_filter=args.dynamic_gap_filter,
         dynamic_corr_filter=args.dynamic_corr_filter,
+        sector_flow_tilt=args.sector_flow_tilt,
+        tilt_strength=args.tilt_strength,
+        tilt_windows=[int(w) for w in args.tilt_windows.split(',')],
         buy_cost=args.buy_cost,
         sell_cost=args.sell_cost,
     )
