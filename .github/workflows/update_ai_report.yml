@@ -89,12 +89,13 @@ jobs:
           git config --global user.email "voidful.stack@gmail.com"
           git config --global user.name "Voidful"
 
+          git add -A
+          git commit -m "📊 AI Report v8.5 + Paper Trading ($(date -u '+%Y-%m-%d'))" || echo "No changes"
+
           # Rebase onto latest remote to prevent non-fast-forward rejection
           git fetch origin main
           git rebase origin/main
 
-          git add -A
-          git commit -m "📊 AI Report v8.5 + Paper Trading ($(date -u '+%Y-%m-%d'))" || echo "No changes"
           git push origin HEAD:main
 
   # 每季第一週自動跑 sweep + Monte Carlo + Walk-Forward
@@ -145,10 +146,11 @@ jobs:
           git config --global user.email "voidful.stack@gmail.com"
           git config --global user.name "Voidful"
 
+          git add -A
+          git commit -m "🔄 Quarterly health check ($(date -u '+%Y-%m-%d'))" || echo "No changes"
+
           # Rebase onto latest remote to prevent non-fast-forward rejection
           git fetch origin main
           git rebase origin/main
 
-          git add -A
-          git commit -m "🔄 Quarterly health check ($(date -u '+%Y-%m-%d'))" || echo "No changes"
           git push origin HEAD:main
