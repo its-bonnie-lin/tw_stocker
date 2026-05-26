@@ -1,12 +1,12 @@
 """
 三大法人籌碼因子模組 (Institutional Flow Factor)
 
-從 voidful/tw-institutional-stocker GitHub Pages 抓取三大法人持股時序數據，
+從 its-bonnie-lin/tw-institutional-stocker GitHub Pages 抓取三大法人持股時序數據，
 計算橫向排名作為策略因子。
 
 數據來源:
-- https://voidful.github.io/tw-institutional-stocker/data/timeseries/{code}.json
-- https://voidful.github.io/tw-institutional-stocker/data/top_three_inst_change_{w}_up.json
+- https://its-bonnie-lin.github.io/tw-institutional-stocker/data/timeseries/{code}.json
+- https://its-bonnie-lin.github.io/tw-institutional-stocker/data/top_three_inst_change_{w}_up.json
 
 欄位:
 - foreign_ratio: 外資持股比重 (%)
@@ -23,7 +23,7 @@ import numpy as np
 from datetime import datetime
 from functools import lru_cache
 
-BASE_URL = "https://voidful.github.io/tw-institutional-stocker/data"
+BASE_URL = "https://its-bonnie-lin.github.io/tw-institutional-stocker/data"
 TIMEOUT = 15
 
 

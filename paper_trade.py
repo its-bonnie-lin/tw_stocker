@@ -33,10 +33,44 @@ import sys
 from datetime import datetime, date
 import argparse
 
-
 TRADE_LOG = 'paper_trades.json'
 SIGNAL_LOG = 'paper_signals.json'
 EQUITY_LOG = 'paper_equity.json'
+
+
+# 股票名稱快取（避免重複查詢）
+_STOCK_NAME_CACHE = {}
+
+def _load_twse_names():
+    """從台灣證交所 API 載入股票中文名稱到快取。"""
+    global _STOCK_NAME_CACHE
+    if _STOCK_NAME_CACHE:
+        return
+    try:
+        import urllib.request
+        import json as _json
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        url = 'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+        for item in data:
+            code = item.get('Code', '')
+            name = item.get('Name', '')
+            if code and name:
+                _STOCK_NAME_CACHE[code] = name
+        print(f"   ✅ 已載入 {len(_STOCK_NAME_CACHE)} 筆股票名稱")
+    except Exception as e:
+        print(f"   ⚠️ 載入股票名稱失敗: {e}")
+
+
+def get_stock_name(ticker):
+    """查台股中文名稱（快取版，只查一次）。"""
+    _load_twse_names()
+    return _STOCK_NAME_CACHE.get(ticker, '')
 
 
 def send_telegram(message):
@@ -218,16 +252,15 @@ def generate_signals(args):
 
         # Telegram 通知
         if hasattr(args, 'notify') and args.notify:
-            msg = f"📊 今日執行信號 ({today})\n"
+            msg = f"📊 今日執行信號 ({today})\n\n"
             for s in new_signals:
+                name = get_stock_name(s['ticker'])
+                name_str = f" {name}" if name else ""
                 msg += (
-                    f"<b>{s['ticker']}</b> "
-                    f"進場{s['entry_price']:.1f} "
-                    f"TP{s['tp_price']:.1f} "
-                    f"SL{s['sl_price']:.1f}"
+                    f"📌<b>{s['ticker']}{name_str}</b>"
+                    f"進場{s['entry_price']:.0f} 🟢停利{s['tp_price']:.0f} 🔴停損{s['sl_price']:.0f}"
+                    f"最晚出場{s['exit_date'][5:] if s.get('exit_date') else '-'}"
                 )
-                if s.get('exit_date'):
-                    msg += f" 最晚{s['exit_date']}"
                 if has_enrich:
                     idata = inst_data.get(s['ticker'], {})
                     ndata = news_data.get(s['ticker'], {})

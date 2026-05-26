@@ -5,8 +5,9 @@
 
 > 最新重算：2026-05-26。以下數字已套用日期對齊、eval window 裁切、raw OHLCV tradability mask、`.TW/.TWO` fallback、Arithmetic Sharpe 修正。舊版 README 的高 Sharpe / crisis headline 不應再沿用。
 
-📊 **線上報表**：https://voidful.github.io/tw_stocker/stock_report.html
-📈 **Paper Trading**：https://voidful.github.io/tw_stocker/paper_trading.html
+📊 **線上報表**：https://its-bonnie-lin.github.io/tw_stocker/stock_report.html
+
+📈 **Paper Trading**：https://its-bonnie-lin.github.io/tw_stocker/paper_trading.html
 
 ---
 

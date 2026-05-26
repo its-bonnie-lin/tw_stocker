@@ -1,11 +1,11 @@
 """
 新聞情緒因子模組 (News Sentiment Factor)
 
-從 voidful/tw_news_stocker GitHub Pages 抓取新聞情緒排名，
+從 its-bonnie-lin/tw_news_stocker GitHub Pages 抓取新聞情緒排名，
 用於即時信號標注。
 
 數據來源:
-- https://voidful.github.io/tw_news_stocker/
+- https://its-bonnie-lin.github.io/tw_news_stocker
 - docs/data/leaderboard_{d}d.csv (d = 1, 3, 5, 10, 30, 60)
 - data/news_log.jsonl (歷史累積)
 
@@ -20,9 +20,9 @@ import io
 import json
 import urllib.request
 
-RAW_DATA_URL = "https://raw.githubusercontent.com/voidful/tw_news_stocker/main/docs/data"
-PAGES_DATA_URL = "https://voidful.github.io/tw_news_stocker/data"
-LEGACY_RAW_URL = "https://raw.githubusercontent.com/voidful/tw_news_stocker/main"
+BASE_URL = "https://raw.githubusercontent.com/its-bonnie-lin/tw_news_stocker/main/docs/data"
+PAGES_URL = "https://its-bonnie-lin.github.io/tw_news_stocker"
+LEGACY_RAW_URL = "https://raw.githubusercontent.com/its-bonnie-lin/tw_news_stocker/main"
 TIMEOUT = 15
 
 

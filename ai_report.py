@@ -191,7 +191,7 @@ def _build_inst_section():
     html = f"""
     <h2>🏛️ 三大法人籌碼動態</h2>
     <p class="section-note">
-        近 20 日三大法人（外資+投信+自營商）持股比重變化排名。Data: <a href="https://github.com/voidful/tw-institutional-stocker" style="color:#4FC3F7;">tw-institutional-stocker</a>
+        近 20 日三大法人（外資+投信+自營商）持股比重變化排名。Data: <a href="https://github.com/its-bonnie-lin/tw-institutional-stocker" style="color:#4FC3F7;">tw-institutional-stocker</a>
     </p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div>

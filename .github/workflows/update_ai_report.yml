@@ -73,6 +73,13 @@ jobs:
       - name: Paper Trading Tracker
         if: github.event.schedule != '0 10 1 * *'
         run: python paper_tracker.py
+        
+      - name: Send Telegram Signal Notification
+        if: github.event.schedule != '0 10 1 * *'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python paper_trade.py signals --notify
 
       - name: Monthly Paper Trading Report
         if: github.event.schedule == '0 10 1 * *'
@@ -86,8 +93,8 @@ jobs:
 
       - name: Commit and push
         run: |
-          git config --global user.email "voidful.stack@gmail.com"
-          git config --global user.name "Voidful"
+          git config --global user.email "bonbonnieuuu@gmail.com"
+          git config --global user.name "its-bonnie-lin"
 
           git add stock_report.html paper_trading.html paper_equity.json || true
           git commit -m "📊 AI Report v8.5 + Paper Trading ($(date -u '+%Y-%m-%d'))" || echo "No changes"
@@ -145,8 +152,8 @@ jobs:
       - name: Upload quarterly report
         if: steps.check.outputs.run == 'true'
         run: |
-          git config --global user.email "voidful.stack@gmail.com"
-          git config --global user.name "Voidful"
+          git config --global user.email "bonbonnieuuu@gmail.com"
+          git config --global user.name "its-bonnie-lin"
 
           git add factor_search_results.csv ablation_results.csv backtest_chart.png || true
           git commit -m "🔄 Quarterly health check ($(date -u '+%Y-%m-%d'))" || echo "No changes"
