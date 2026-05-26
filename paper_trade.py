@@ -257,7 +257,7 @@ def generate_signals(args):
                 name = get_stock_name(s['ticker'])
                 name_str = f" {name}" if name else ""
                 msg += (
-                    f"📌<b>{s['ticker']}{name_str}</b>"
+                    f"📌<b>{s['ticker']}{name_str}</b>\n"
                     f"進場{s['entry_price']:.0f} 🟢停利{s['tp_price']:.0f} 🔴停損{s['sl_price']:.0f}"
                     f"最晚出場{s['exit_date'][5:] if s.get('exit_date') else '-'}"
                 )
