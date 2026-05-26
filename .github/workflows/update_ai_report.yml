@@ -96,12 +96,12 @@ jobs:
           git config --global user.email "bonbonnieuuu@gmail.com"
           git config --global user.name "its-bonnie-lin"
 
-          git add stock_report.html paper_trading.html paper_equity.json || true
+          git add -A
           git commit -m "📊 AI Report v8.5 + Paper Trading ($(date -u '+%Y-%m-%d'))" || echo "No changes"
 
           # Rebase onto latest remote to prevent non-fast-forward rejection
           git fetch origin main
-          git rebase origin/main
+          git rebase -X theirs origin/main || git rebase --abort
 
           git push origin HEAD:main
 
