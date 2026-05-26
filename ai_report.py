@@ -193,7 +193,7 @@ def _build_inst_section():
     <p class="section-note">
         近 20 日三大法人（外資+投信+自營商）持股比重變化排名。Data: <a href="https://github.com/its-bonnie-lin/tw-institutional-stocker" style="color:#4FC3F7;">tw-institutional-stocker</a>
     </p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+    <div class="split-grid">
         <div>
             <h3 style="color:#00ff00;margin-bottom:8px;">🟢 法人買超 Top-15（20日）</h3>
             <table style="width:100%;">
@@ -961,32 +961,107 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 台股量化交易 v8.5 — {report_date}</title>
     <meta name="description" content="AI 驅動的台股量化交易系統 v8.5，完整風險報告、Benchmark 對比、OCO 智慧掛單建議">
+    <script>
+        (function() {{
+            let savedTheme = null;
+            try {{ savedTheme = localStorage.getItem('tw-stocker-theme'); }} catch (error) {{}}
+            document.documentElement.dataset.theme = savedTheme === 'light' ? 'light' : 'dark';
+        }})();
+    </script>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        html {{
+            width: 100%;
+            overflow-x: hidden;
+            color-scheme: dark;
+        }}
         :root {{
+            --bg: #0b0f14;
+            --surface: #111820;
+            --surface-soft: #17212b;
+            --text: #eef4fb;
+            --muted: #94a3b8;
+            --border: #283545;
+            --line: #1f2a37;
+            --blue: #38bdf8;
+            --green: #34d399;
+            --red: #fb7185;
+            --orange: #fbbf24;
+            --purple: #c084fc;
+            --shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+            --card-border: rgba(148, 163, 184, 0.16);
+            --hover: rgba(148, 163, 184, 0.08);
+            --badge-bg: #1f2937;
+            --toggle-bg: rgba(17, 24, 39, 0.86);
+            --toggle-border: rgba(148, 163, 184, 0.26);
+        }}
+        html[data-theme="light"] {{
+            color-scheme: light;
             --bg: #f5f5f7;
             --surface: #ffffff;
             --surface-soft: #fbfbfd;
             --text: #1d1d1f;
-            --muted: #86868b;
+            --muted: #686872;
             --border: #d2d2d7;
             --line: #f2f2f7;
             --blue: #007aff;
-            --green: #34c759;
-            --red: #ff3b30;
-            --orange: #ff9500;
+            --green: #248a3d;
+            --red: #d70015;
+            --orange: #bf6a02;
             --purple: #af52de;
             --shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+            --card-border: rgba(0, 0, 0, 0.04);
+            --hover: #f7f7fa;
+            --badge-bg: #e8e8ed;
+            --toggle-bg: rgba(255, 255, 255, 0.88);
+            --toggle-border: rgba(0, 0, 0, 0.10);
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             background: var(--bg);
             color: var(--text);
-            padding: 40px 24px;
+            padding: 40px clamp(12px, 4vw, 24px);
             line-height: 1.5;
             -webkit-font-smoothing: antialiased;
+            min-width: 0;
+            overflow-x: hidden;
         }}
-        .container {{ max-width: 1120px; margin: 0 auto; }}
+        .container {{
+            width: 100%;
+            max-width: 1120px;
+            min-width: 0;
+            margin: 0 auto;
+        }}
+        .theme-toggle {{
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 20;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 38px;
+            padding: 8px 12px;
+            border: 1px solid var(--toggle-border);
+            border-radius: 999px;
+            background: var(--toggle-bg);
+            color: var(--text);
+            box-shadow: var(--shadow);
+            font: inherit;
+            font-weight: 650;
+            cursor: pointer;
+            backdrop-filter: blur(12px);
+        }}
+        .theme-toggle:hover {{ transform: translateY(-1px); }}
+        .theme-icon {{
+            display: inline-grid;
+            width: 18px;
+            height: 18px;
+            place-items: center;
+            font-size: 0.98rem;
+            line-height: 1;
+        }}
+        .theme-label {{ font-size: 0.82rem; }}
         h1 {{
             font-size: 2.2rem;
             font-weight: 650;
@@ -1009,10 +1084,11 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             text-align: center;
             margin-bottom: 32px;
             font-weight: 500;
+            overflow-wrap: anywhere;
         }}
         .stats {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
             gap: 14px;
             margin-bottom: 30px;
         }}
@@ -1021,8 +1097,9 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             padding: 18px 16px;
             border-radius: 8px;
             text-align: center;
-            border: 1px solid rgba(0, 0, 0, 0.03);
+            border: 1px solid var(--card-border);
             box-shadow: var(--shadow);
+            min-width: 0;
         }}
         .stat-card.risk {{ border-top: 3px solid var(--purple); }}
         .stat-card.benchmark {{ border-top: 3px solid var(--orange); }}
@@ -1048,6 +1125,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             border-radius: 8px;
             box-shadow: var(--shadow);
             overflow: hidden;
+            max-width: 100%;
         }}
         th, td {{
             padding: 13px 14px;
@@ -1055,6 +1133,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             border-bottom: 1px solid var(--line);
             font-size: 0.88rem;
             vertical-align: top;
+            overflow-wrap: anywhere;
         }}
         th {{
             background: var(--surface-soft);
@@ -1065,19 +1144,20 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             letter-spacing: 0.02em;
         }}
         tr:last-child td {{ border-bottom: none; }}
-        tr:hover td {{ background: #f7f7fa; }}
+        tr:hover td {{ background: var(--hover); }}
         img {{
             max-width: 100%;
+            height: auto;
             border-radius: 8px;
             margin-top: 14px;
-            border: 1px solid rgba(0, 0, 0, 0.03);
+            border: 1px solid var(--card-border);
             box-shadow: var(--shadow);
         }}
         .disclaimer {{
             margin-top: 52px;
             padding: 22px;
             background: var(--surface);
-            border: 1px solid rgba(0, 0, 0, 0.03);
+            border: 1px solid var(--card-border);
             border-radius: 8px;
             font-size: 0.85rem;
             color: var(--muted);
@@ -1092,6 +1172,7 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
             font-size: 0.75rem;
             font-weight: 600;
             background: #e8e8ed;
+            background: var(--badge-bg);
             color: var(--text);
             margin: 2px;
         }}
@@ -1107,20 +1188,62 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
         span[style*="color:#ffab00"], div[style*="color:#ffab00"], td[style*="color:#ffab00"] {{ color: var(--orange) !important; }}
         span[style*="color:#00e5ff"], h3[style*="color:#00e5ff"] {{ color: var(--blue) !important; }}
         span[style*="color:#aaaaaa"], span[style*="color:#888"], td[style*="color:#888"] {{ color: var(--muted) !important; }}
+        div[style*="background:#00ff00"] {{ background: var(--green) !important; }}
+        div[style*="background:#ff4444"] {{ background: var(--red) !important; }}
         div[style*="background:linear-gradient"] {{ filter: brightness(0.9) saturate(1.2); }}
+        .split-grid {{
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 20px;
+        }}
+        .split-grid > div {{ min-width: 0; }}
         @media (max-width: 720px) {{
-            body {{ padding: 24px 12px; }}
+            body {{ padding: 56px 10px 24px; }}
+            .theme-toggle {{
+                top: 10px;
+                right: 10px;
+                min-height: 34px;
+                padding: 7px 10px;
+            }}
+            .theme-label {{ font-size: 0.76rem; }}
             h1 {{ font-size: 1.7rem; }}
             h2 {{ font-size: 1.15rem; margin-top: 30px; }}
-            .stats {{ grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; }}
+            .subtitle {{
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 6px;
+            }}
+            .stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
             .stat-card {{ padding: 14px 12px; }}
             .stat-card .value {{ font-size: 1.25rem; }}
-            table {{ display: block; overflow-x: auto; white-space: nowrap; }}
+            .split-grid {{ grid-template-columns: minmax(0, 1fr); gap: 16px; }}
+            table {{
+                display: block;
+                width: 100%;
+                max-width: 100%;
+                overflow-x: auto;
+                white-space: nowrap;
+                -webkit-overflow-scrolling: touch;
+            }}
+            th, td {{ white-space: nowrap; }}
+            td:nth-child(5), td:nth-child(6), .disclaimer {{
+                white-space: normal;
+                min-width: 220px;
+            }}
             th, td {{ padding: 11px 12px; font-size: 0.82rem; }}
+        }}
+        @media (max-width: 420px) {{
+            .stats {{ grid-template-columns: minmax(0, 1fr); }}
+            .config-badge {{ max-width: 100%; white-space: normal; }}
         }}
     </style>
 </head>
 <body>
+<button class="theme-toggle" id="themeToggle" type="button" aria-label="切換深色與淺色主題" aria-pressed="true">
+    <span class="theme-icon" aria-hidden="true">☾</span>
+    <span class="theme-label">深色</span>
+</button>
 <div class="container">
 
     <h1>🎯 AI 台股量化交易 v8.5</h1>
@@ -1272,6 +1395,28 @@ def generate_report(trades_df, equity_df, total_score, close_df, config,
     </div>
 
 </div>
+<script>
+    (function() {{
+        const button = document.getElementById('themeToggle');
+        if (!button) return;
+        const icon = button.querySelector('.theme-icon');
+        const label = button.querySelector('.theme-label');
+
+        function setTheme(theme) {{
+            const nextTheme = theme === 'light' ? 'light' : 'dark';
+            document.documentElement.dataset.theme = nextTheme;
+            try {{ localStorage.setItem('tw-stocker-theme', nextTheme); }} catch (error) {{}}
+            button.setAttribute('aria-pressed', String(nextTheme === 'dark'));
+            if (icon) icon.textContent = nextTheme === 'dark' ? '☾' : '☀';
+            if (label) label.textContent = nextTheme === 'dark' ? '深色' : '淺色';
+        }}
+
+        setTheme(document.documentElement.dataset.theme || 'dark');
+        button.addEventListener('click', function() {{
+            setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+        }});
+    }})();
+</script>
 </body>
 </html>"""
 
