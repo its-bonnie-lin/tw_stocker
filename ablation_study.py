@@ -27,6 +27,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strategy.ai_strategy import fetch_panel_data, build_liquid_universe
 from strategy.event_backtest import EventDrivenBacktester
 from strategy.risk_metrics import compute_risk_metrics
+from research.experiment_registry import (
+    DEFAULT_REGISTRY_PATH,
+    ExperimentRegistry,
+    daily_returns_from_equity,
+    series_from_daily_returns,
+    trial_record,
+)
+from validation.deflated_sharpe import compute_deflated_sharpe
+from validation.pbo_cscv import compute_pbo
 
 
 DEFAULT_TICKERS = [
@@ -126,6 +135,83 @@ def run_single_ablation(label, factors, close_df, open_df, high_df, low_df, vol_
     return metrics, equity_df
 
 
+def record_ablation_experiment(args, results, equity_curves, ablation_configs):
+    """Persist ablation outcomes to the shared experiment registry."""
+    if args.no_registry or not results:
+        return None
+
+    trials = []
+    returns_by_trial = {}
+    for metrics in results:
+        label = metrics.get('label', 'unknown')
+        daily_returns = daily_returns_from_equity(equity_curves.get(label))
+        series = series_from_daily_returns(daily_returns)
+        if not series.empty:
+            returns_by_trial[label] = series
+
+        trials.append(trial_record(
+            trial_id=label,
+            parameters={
+                'factors': metrics.get('factors'),
+                'hold_days': metrics.get('hold_days'),
+                'top_k': args.top_k,
+                'threshold': args.threshold,
+                'days': args.days,
+            },
+            metrics=metrics,
+            daily_returns=daily_returns,
+            decision='watchlist',
+        ))
+
+    best = max(results, key=lambda x: x.get('sharpe', float('-inf')))
+    best_label = best.get('label', 'unknown')
+    best_daily_returns = daily_returns_from_equity(equity_curves.get(best_label))
+    best_series = series_from_daily_returns(best_daily_returns)
+
+    dsr_probability = None
+    dsr_z = None
+    if len(best_series) >= 3:
+        dsr = compute_deflated_sharpe(best_series, n_trials=len(results))
+        dsr_probability = dsr.probability
+        dsr_z = dsr.deflated_sharpe
+
+    pbo_value = None
+    if len(returns_by_trial) >= 2:
+        pbo = compute_pbo(returns_by_trial, n_splits=8)
+        if pbo.pbo == pbo.pbo:  # NaN-safe check
+            pbo_value = pbo.pbo
+
+    registry = ExperimentRegistry(args.registry)
+    experiment_id = registry.record_experiment(
+        source='ablation_study.py',
+        strategy_version='v8.5',
+        hypothesis='Measure marginal contribution of candidate factor groups.',
+        parameter_space=[
+            {'label': label, 'factors': factors, 'hold_days': hold_days}
+            for label, factors, hold_days in ablation_configs
+        ],
+        number_of_trials=len(results),
+        in_sample_period=f'last_{args.days}_days',
+        metrics={
+            'best_label': best_label,
+            'best_metrics': best,
+            'dsr_probability': dsr_probability,
+            'dsr_z': dsr_z,
+            'pbo': pbo_value,
+        },
+        daily_returns=best_daily_returns,
+        sharpe=best.get('sharpe'),
+        max_drawdown=best.get('max_drawdown_pct'),
+        deflated_sharpe=dsr_probability,
+        pbo=pbo_value,
+        decision='watchlist',
+        command=' '.join(sys.argv),
+        trials=trials,
+    )
+    print(f"🧾 實驗已寫入 registry: {args.registry} ({experiment_id})")
+    return experiment_id
+
+
 def main():
     parser = argparse.ArgumentParser(description='因子 Ablation Study')
     parser.add_argument('--tickers', nargs='+', default=DEFAULT_TICKERS)
@@ -133,6 +219,10 @@ def main():
     parser.add_argument('--capital', type=float, default=1_000_000)
     parser.add_argument('--top-k', type=int, default=5)    # 對齊 README
     parser.add_argument('--threshold', type=float, default=2.0)
+    parser.add_argument('--registry', type=str, default=DEFAULT_REGISTRY_PATH,
+                        help='實驗 registry SQLite 路徑')
+    parser.add_argument('--no-registry', action='store_true',
+                        help='不要寫入實驗 registry')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -244,6 +334,8 @@ def main():
     fig.savefig('ablation_chart.png', dpi=150, bbox_inches='tight', facecolor='#121212')
     plt.close(fig)
     print(f"📈 對比圖已存為 ablation_chart.png")
+
+    record_ablation_experiment(args, results, equity_curves, ablation_configs)
 
 
 if __name__ == '__main__':

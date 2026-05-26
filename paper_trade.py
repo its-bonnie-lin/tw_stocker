@@ -383,7 +383,7 @@ def check_portfolio_hardstop(args):
     """
     trades = load_json(TRADE_LOG)
     if not trades:
-        print("⚠️ 無成交記錄，請先用 paper_trade.py log 記錄成交")
+        check_tracker_hardstop(args)
         return
 
     soft_pct = args.soft_stop
@@ -480,6 +480,50 @@ def check_portfolio_hardstop(args):
         else:
             print(f"   MTM損益率:    {pnl_pct:+.1f}%")
             print(f"   ✅ 在安全範圍內")
+
+
+def check_tracker_hardstop(args):
+    """Fallback hard stop check for the automated paper tracker state."""
+    equity_data = load_json(EQUITY_LOG)
+    if not isinstance(equity_data, dict) or not equity_data.get('equity_curve'):
+        print("⚠️ 無成交記錄，也沒有 paper tracker 權益曲線")
+        return
+
+    equity_curve = equity_data.get('equity_curve', [])
+    initial_equity = equity_data.get('initial_capital', 0)
+    current_equity = equity_curve[-1].get('equity', 0)
+    peak_equity = max([initial_equity] + [pt.get('equity', 0) for pt in equity_curve])
+    drawdown_pct = (current_equity / peak_equity - 1) * 100 if peak_equity > 0 else 0
+    total_return_pct = (current_equity / initial_equity - 1) * 100 if initial_equity > 0 else 0
+    positions = equity_data.get('positions', {})
+
+    print("🛡️ Portfolio Hard Stop 檢查 (paper tracker)")
+    print(f"   初始權益:     {initial_equity:,.0f}")
+    print(f"   目前權益:     {current_equity:,.0f} ({total_return_pct:+.1f}%)")
+    print(f"   權益高點:     {peak_equity:,.0f}")
+    print(f"   權益回撤:     {drawdown_pct:+.1f}%")
+    print(f"   未平倉檔數:   {len(positions)}")
+    print(f"   Soft stop:    -{args.soft_stop:.0f}%")
+    print(f"   Hard stop:    -{args.hard_stop:.0f}%")
+
+    if drawdown_pct <= -args.hard_stop:
+        msg = (f"🚨🚨 HARD STOP 觸發！\n"
+               f"Paper tracker 權益回撤: {drawdown_pct:+.1f}%\n"
+               f"門檻: -{args.hard_stop:.0f}%\n"
+               f"⚡ 建議立即全部平倉")
+        print(f"\n{msg}")
+        send_telegram(msg)
+        sys.exit(2)
+    if drawdown_pct <= -args.soft_stop:
+        msg = (f"⚠️ SOFT STOP 觸發！\n"
+               f"Paper tracker 權益回撤: {drawdown_pct:+.1f}%\n"
+               f"門檻: -{args.soft_stop:.0f}%\n"
+               f"💡 建議減半部位，暫停新進場")
+        print(f"\n{msg}")
+        send_telegram(msg)
+        sys.exit(1)
+
+    print("   ✅ 在安全範圍內")
 
 
 def generate_monthly_report(args):

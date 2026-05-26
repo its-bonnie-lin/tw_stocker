@@ -39,6 +39,15 @@ from strategy.finlab_factors import (
     compute_value_rank,
     compute_revenue_momentum,
 )
+from research.experiment_registry import (
+    DEFAULT_REGISTRY_PATH,
+    ExperimentRegistry,
+    daily_returns_from_equity,
+    series_from_daily_returns,
+    trial_record,
+)
+from validation.deflated_sharpe import compute_deflated_sharpe
+from validation.pbo_cscv import compute_pbo
 
 
 DEFAULT_TICKERS = [
@@ -364,6 +373,88 @@ def plot_results(results, equity_curves, output_path='factor_search_chart.png'):
     print(f"\n📈 圖表已存為 {output_path}")
 
 
+def record_factor_search_experiment(args, results, equity_curves):
+    """Persist factor-search outcomes to the shared experiment registry."""
+    if args.no_registry or not results:
+        return None
+
+    trials = []
+    returns_by_trial = {}
+    for metrics in results:
+        label = metrics.get('label', 'unknown')
+        daily_returns = daily_returns_from_equity(equity_curves.get(label))
+        series = series_from_daily_returns(daily_returns)
+        if not series.empty:
+            returns_by_trial[label] = series
+
+        trials.append(trial_record(
+            trial_id=label,
+            parameters={
+                'weights': metrics.get('weights', ''),
+                'top_k': args.top_k,
+                'hold_days': args.hold_days,
+                'days': args.days,
+                'mode': args.mode,
+                'static_pool': args.static_pool,
+                'skip_value': args.skip_value,
+            },
+            metrics=metrics,
+            daily_returns=daily_returns,
+            decision='watchlist',
+        ))
+
+    best = max(results, key=lambda x: x.get('sharpe', float('-inf')))
+    best_label = best.get('label', 'unknown')
+    best_daily_returns = daily_returns_from_equity(equity_curves.get(best_label))
+    best_series = series_from_daily_returns(best_daily_returns)
+
+    dsr_probability = None
+    dsr_z = None
+    if len(best_series) >= 3:
+        dsr = compute_deflated_sharpe(best_series, n_trials=len(results))
+        dsr_probability = dsr.probability
+        dsr_z = dsr.deflated_sharpe
+
+    pbo_value = None
+    if len(returns_by_trial) >= 2:
+        pbo = compute_pbo(returns_by_trial, n_splits=8)
+        if pbo.pbo == pbo.pbo:
+            pbo_value = pbo.pbo
+
+    registry = ExperimentRegistry(args.registry)
+    experiment_id = registry.record_experiment(
+        source='factor_grid_search.py',
+        strategy_version='v8.5',
+        hypothesis='Search FinLab-inspired factor combinations against the current baseline.',
+        parameter_space={
+            'mode': args.mode,
+            'top_k': args.top_k,
+            'hold_days': args.hold_days,
+            'static_pool': args.static_pool,
+            'skip_value': args.skip_value,
+        },
+        number_of_trials=len(results),
+        in_sample_period=f'last_{args.days}_days',
+        metrics={
+            'best_label': best_label,
+            'best_metrics': best,
+            'dsr_probability': dsr_probability,
+            'dsr_z': dsr_z,
+            'pbo': pbo_value,
+        },
+        daily_returns=best_daily_returns,
+        sharpe=best.get('sharpe'),
+        max_drawdown=best.get('max_drawdown_pct'),
+        deflated_sharpe=dsr_probability,
+        pbo=pbo_value,
+        decision='watchlist',
+        command=' '.join(sys.argv),
+        trials=trials,
+    )
+    print(f"🧾 實驗已寫入 registry: {args.registry} ({experiment_id})")
+    return experiment_id
+
+
 def main():
     parser = argparse.ArgumentParser(description='因子組合搜索引擎')
     parser.add_argument('--mode', choices=['ablation', 'compare', 'grid'],
@@ -382,6 +473,10 @@ def main():
                         help='啟用價值因子（需要 yfinance API 呼叫）')
     parser.add_argument('--output', type=str, default='factor_search_results.csv',
                         help='結果 CSV 輸出路徑')
+    parser.add_argument('--registry', type=str, default=DEFAULT_REGISTRY_PATH,
+                        help='實驗 registry SQLite 路徑')
+    parser.add_argument('--no-registry', action='store_true',
+                        help='不要寫入實驗 registry')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -454,6 +549,8 @@ def main():
         })
     pd.DataFrame(summary_rows).to_csv(args.output, index=False)
     print(f"📄 結果已存為 {args.output}")
+
+    record_factor_search_experiment(args, results, equity_curves)
 
     # 結論
     baseline = next((r for r in results if 'Baseline' in r.get('label', '')
