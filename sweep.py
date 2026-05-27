@@ -18,6 +18,17 @@ import csv
 from datetime import datetime
 from itertools import product
 
+from research.experiment_registry import (
+    DEFAULT_REGISTRY_PATH,
+    ExperimentRegistry,
+    daily_returns_from_equity_csv,
+    latest_equity_artifact,
+    series_from_daily_returns,
+    trial_record,
+)
+from validation.deflated_sharpe import compute_deflated_sharpe
+from validation.pbo_cscv import compute_pbo
+
 
 def run_backtest(args_str):
     """Run ai_report.py with given args and extract metrics."""
@@ -57,7 +68,7 @@ def run_backtest(args_str):
 
 def full_sweep():
     """Full parameter sweep: ~40 configs."""
-    configs = []
+    configs = [('baseline', '')]
 
     # Core parameters to sweep
     tp_atrs = [3.5, 4.0, 4.5]
@@ -127,11 +138,74 @@ def quick_sweep():
     ]
 
 
+def record_sweep_experiment(args, configs, results, trial_records, decision):
+    """Persist sweep outcomes to the shared experiment registry."""
+    if args.no_registry or not trial_records:
+        return None
+
+    successful = [trial for trial in trial_records if not trial.get('error')]
+    returns_by_trial = {}
+    for trial in successful:
+        series = series_from_daily_returns(trial.get('daily_returns'))
+        if not series.empty:
+            returns_by_trial[trial['trial_id']] = series
+
+    best = max(results, key=lambda x: x.get('sharpe', float('-inf'))) if results else {}
+    best_trial = next((t for t in trial_records if t['trial_id'] == best.get('name')), None)
+    best_daily_returns = best_trial.get('daily_returns') if best_trial else []
+
+    dsr_probability = None
+    dsr_z = None
+    best_series = series_from_daily_returns(best_daily_returns)
+    if len(best_series) >= 3:
+        dsr = compute_deflated_sharpe(best_series, n_trials=len(configs))
+        dsr_probability = dsr.probability
+        dsr_z = dsr.deflated_sharpe
+
+    pbo_value = None
+    if len(returns_by_trial) >= 2:
+        pbo = compute_pbo(returns_by_trial, n_splits=8)
+        if pbo.pbo == pbo.pbo:
+            pbo_value = pbo.pbo
+
+    registry = ExperimentRegistry(args.registry)
+    experiment_id = registry.record_experiment(
+        source='sweep.py',
+        strategy_version='v8.5',
+        hypothesis='Quarterly parameter recalibration should not materially improve the current baseline.',
+        parameter_space=[{'name': name, 'args': cmd_args} for name, cmd_args in configs],
+        number_of_trials=len(configs),
+        in_sample_period='current_backtest_window',
+        metrics={
+            'best_config': best.get('name'),
+            'best_metrics': best,
+            'dsr_probability': dsr_probability,
+            'dsr_z': dsr_z,
+            'pbo': pbo_value,
+            'quick': args.quick,
+        },
+        daily_returns=best_daily_returns,
+        sharpe=best.get('sharpe'),
+        max_drawdown=best.get('mdd'),
+        deflated_sharpe=dsr_probability,
+        pbo=pbo_value,
+        decision=decision,
+        command=' '.join(sys.argv),
+        trials=trial_records,
+    )
+    print(f"🧾 實驗已寫入 registry: {args.registry} ({experiment_id})")
+    return experiment_id
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='季度參數重新校準')
     parser.add_argument('--quick', action='store_true', help='快速掃描')
     parser.add_argument('--output', choices=['log', 'csv'], help='輸出格式')
+    parser.add_argument('--registry', type=str, default=DEFAULT_REGISTRY_PATH,
+                        help='實驗 registry SQLite 路徑')
+    parser.add_argument('--no-registry', action='store_true',
+                        help='不要寫入實驗 registry')
     args = parser.parse_args()
 
     configs = quick_sweep() if args.quick else full_sweep()
@@ -141,6 +215,7 @@ def main():
     print()
 
     results = []
+    trial_records = []
     total = len(configs)
     for idx, (name, cmd_args) in enumerate(configs):
         sys.stderr.write(f'[{idx+1}/{total}] {name}...\n')
@@ -150,8 +225,25 @@ def main():
             metrics['name'] = name
             metrics['args'] = cmd_args
             results.append(metrics)
+            equity_path = latest_equity_artifact()
+            daily_returns = daily_returns_from_equity_csv(equity_path)
+            trial_records.append(trial_record(
+                trial_id=name,
+                parameters={'args': cmd_args},
+                metrics=metrics,
+                daily_returns=daily_returns,
+                decision='watchlist',
+                notes=f'equity_artifact={equity_path}' if equity_path else None,
+            ))
         except Exception as e:
             print(f'   ⚠️ {name} failed: {e}')
+            trial_records.append(trial_record(
+                trial_id=name,
+                parameters={'args': cmd_args},
+                metrics={},
+                error=str(e),
+                decision='reject',
+            ))
 
     # Sort by Sharpe
     results.sort(key=lambda x: x['sharpe'], reverse=True)
@@ -176,6 +268,11 @@ def main():
 
     # Summary + degradation alert
     print(sep)
+    if not results:
+        print("\n❌ 所有 sweep 配置都失敗，請檢查資料下載或 ai_report.py 輸出格式")
+        record_sweep_experiment(args, configs, results, trial_records, 'reject')
+        sys.exit(1)
+
     best = results[0]
     exit_code = 0
     alerts = []
@@ -211,11 +308,14 @@ def main():
                 print("   📱 已發送 Telegram 警報")
         except Exception:
             pass
+        decision = 'reject'
     elif baseline_sharpe and best['sharpe'] > baseline_sharpe * 1.05:
         print(f"\n⚠️  發現更優配置: {best['name']} (Sharpe {best['sharpe']:.3f} vs baseline {baseline_sharpe:.3f})")
         print(f"   建議命令: python ai_report.py {best['args']}")
+        decision = 'watchlist'
     else:
         print(f"\n✅ 當前配置仍為最優或差異 < 5%")
+        decision = 'accept'
 
     # CSV output
     if args.output in ('log', 'csv'):
@@ -226,6 +326,8 @@ def main():
             writer.writeheader()
             writer.writerows(results)
         print(f"📄 結果已儲存至 {filename}")
+
+    record_sweep_experiment(args, configs, results, trial_records, decision)
 
     sys.exit(exit_code)
 

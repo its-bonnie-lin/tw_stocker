@@ -19,8 +19,8 @@
 | **Regime** | 台股 0050 vs MA60 | 🌍 **美股 SPY + VIX + SOX** |
 | **選股因子** | Mom(20d)×3 + Trend(60MA)×1 | 板塊 flow(10/15/20d) + 板塊內動量 |
 | **角色** | 穩健底倉（低 MDD） | 積極追蹤（高報酬） |
-| **1200d 年化** | **+76.2%** | +53.8% |
-| **1200d Sharpe** | **2.35** | 1.61 |
+| **1200d 年化** | **+76.8%** | +53.8% |
+| **1200d Sharpe** | **2.37** | 1.61 |
 | **1200d MDD** | **-16.4%** | -38.0% |
 | **7y 年化參考** | +39.0% | +36.6% |
 | **7y Sharpe 參考** | 1.56 | 1.32 |
@@ -105,13 +105,26 @@ Layer 3: 板塊內選股
 
 ## v8.5 Momentum 策略（保留）
 
+### Research Gate 決策（2026-05-26）
+
+完整 sweep 後挑出 4 組 finalist：`baseline`、`gap=1.0`、`hold=20+k=4`、`tp=3.5/sl=3.0`，再跑 2021-2025 anchored nested walk-forward。
+
+| Candidate | Avg OOS Sharpe | Min OOS Sharpe | Avg MDD | Worst MDD | Train-selected folds |
+|------|:---:|:---:|:---:|:---:|:---:|
+| `gap=1.0` | **1.082** | -1.419 | -14.6% | -21.1% | 0/5 |
+| `baseline` | 1.078 | -1.159 | -14.8% | -19.8% | 1/5 |
+| `hold=20+k=4` | 1.034 | **-0.888** | **-14.3%** | -19.8% | **4/5** |
+| `tp=3.5/sl=3.0` | 1.033 | -1.375 | -16.6% | -25.9% | 0/5 |
+
+Nested train-selected portfolio: average OOS Sharpe 1.025，min Sharpe -0.888，max fold PBO 0.23。Candidate-set PBO = 0.94，因此本輪 **不升級新參數到 production**。Production 維持 v8.5 baseline：TP/SL ATR 4.0/3.0、Hold 20D、Top-7、Gap 1.5。
+
 ### 績效總覽（1200d：2023-02-13 → 2026-05-26）
 
 | 指標 | 值 | 說明 |
 |------|:---:|------|
-| **Sharpe** | **2.353** | Arithmetic daily-return Sharpe |
-| **Geom. Sharpe** | **2.989** | 年化總報酬 / 年化波動 |
-| **年化報酬** | **+76.2%** | 包含交易成本 + 10bps 滑價 |
+| **Sharpe** | **2.365** | Arithmetic daily-return Sharpe |
+| **Geom. Sharpe** | **3.010** | 年化總報酬 / 年化波動 |
+| **年化報酬** | **+76.8%** | 包含交易成本 + 10bps 滑價 |
 | **MDD** | **-16.4%** | 使用 raw tradable OHLCV |
 | **Calmar** | **4.644** | 年化報酬/MDD |
 | **Profit Factor** | **1.95** | 575 筆交易，勝率 57.7% |
@@ -160,13 +173,33 @@ python deep_crisis_test.py
 
 # ── 驗證工具 ──
 python walk_forward.py                                    # OOS 穩定性
+python walk_forward_nested.py --quick                     # Nested train→select→test gate
 python monte_carlo.py --equity artifacts/equity_YYYYMMDD.csv --runs 2000 --block-size 20
 python crisis_test.py                                     # 基礎危機壓測
+
+# ── 研究審計 / 多重測試修正 ──
+python sweep.py --quick                                   # 預設寫入 artifacts/experiments.sqlite
+python factor_grid_search.py --mode ablation              # 寫入同一個 experiment registry
+python -m validation.deflated_sharpe --equity artifacts/equity_YYYYMMDD.csv --trials 20
+python -m research.experiment_registry --latest 20
 
 # ── Paper Trading ──
 python paper_trade.py signals --enrich
 python paper_trade.py hardstop
 ```
+
+## 研究平台化工具
+
+新增的研究層把「跑過哪些參數」變成可審計紀錄，而不是只留下漂亮表格。
+
+| 模組 | 功能 |
+|------|------|
+| `research/experiment_registry.py` | SQLite registry，預設 `artifacts/experiments.sqlite`；記錄 git commit、資料快照、假說、參數空間、trial metrics、daily returns、decision |
+| `validation/deflated_sharpe.py` | Deflated Sharpe Ratio，修正多重測試與非正態報酬造成的 Sharpe 膨脹 |
+| `validation/pbo_cscv.py` | CSCV Probability of Backtest Overfitting，估計「train 內選到的最佳參數在 OOS 掉到下半部」的比例 |
+| `walk_forward_nested.py` | Anchored train → inner parameter selection → next-year test；所有候選參數與外層 OOS 結果都寫入 registry |
+
+`sweep.py`、`factor_grid_search.py`、`ablation_study.py` 會預設寫入同一個 registry；若只想臨時跑表格，可加 `--no-registry`。
 
 ## 專案結構
 
@@ -177,9 +210,15 @@ tw_stocker/
 ├── deep_crisis_test.py           # 🆕 11 段歷史危機壓測 + 00981A
 ├── crisis_test.py                # 基礎危機壓力測試
 ├── walk_forward.py               # Anchored OOS 穩定性驗證 (v2)
+├── walk_forward_nested.py        # Nested train→select→test research gate
 ├── monte_carlo.py                # Equity-Curve Block Bootstrap (v3)
 ├── sweep.py                      # 季度參數校準 + Telegram 警報
 ├── paper_trade.py                # Paper Trading v8 + 月報
+├── research/
+│   └── experiment_registry.py     # SQLite experiment audit log
+├── validation/
+│   ├── deflated_sharpe.py         # Deflated Sharpe Ratio
+│   └── pbo_cscv.py                # CSCV Probability of Backtest Overfitting
 ├── strategy/
 │   ├── ai_strategy.py            # 因子工程 (Mom×3 + Trend×1)
 │   ├── event_backtest.py         # v8.5 事件驅動回測引擎
@@ -208,7 +247,8 @@ tw_stocker/
 > 時序結構可以被隨機重排——在極端 regime 轉換時這不成立。結果應視為
 > **分布估計的參考**，不能直接當作實盤安全邊際。
 >
-> **OOS 穩定性** (`walk_forward.py`) 是固定參數的分段 OOS 測試（非 nested walk-forward）。
+> **OOS 穩定性** (`walk_forward.py`) 是固定參數的分段 OOS 測試；**研究閘門**
+> (`walk_forward_nested.py`) 則是 nested train→select→test，用來評估參數搜尋流程本身是否過擬合。
 >
 > **歷史危機壓測** (`deep_crisis_test.py`) 在 11 段歷史危機做完整回測，
 > 含金融海嘯、COVID、烏俄戰爭、升息、關稅衝擊，同時比較 v8.5 / SR v2 / 0050 / 00981A。
