@@ -83,6 +83,16 @@ def parse_args():
                         help='與 0050 benchmark 比較')
     parser.add_argument('--capital', type=float, default=1_000_000,
                         help='起始資金 (預設 1,000,000)')
+    parser.add_argument('--sector-persistence-days', type=int, default=3,
+                        help='板塊持續性檢查天數 (預設 3)')
+    parser.add_argument('--sector-persistence-min-hits', type=int, default=2,
+                        help='近 N 天至少幾天在 Top sectors 才可進場 (預設 2)')
+    parser.add_argument('--rotation-stability-days', type=int, default=5,
+                        help='主線穩定度檢查天數 (預設 5)')
+    parser.add_argument('--min-top-sector-overlap', type=float, default=0.5,
+                        help='近 N 天 Top sectors 最低平均重疊率 (預設 0.5)')
+    parser.add_argument('--notify-risk', action='store_true',
+                        help='若最新美股風險有警示，使用既有 Telegram 設定通知')
     return parser.parse_args()
 
 
@@ -119,6 +129,31 @@ def main():
     )
     us_aligned = align_us_to_tw(us_signals, close_df.index)
 
+    latest_us = us_aligned.dropna(how='all').tail(1)
+    if not latest_us.empty:
+        row = latest_us.iloc[0]
+        warning = row.get('macro_warning', '')
+        vix = row.get('vix_close', np.nan)
+        regime = row.get('macro_regime', np.nan)
+        if warning:
+            print(f"   ⚠️ 最新宏觀警示: {warning} | VIX={vix:.2f} | regime={regime:.2f}")
+            if args.notify_risk:
+                try:
+                    from paper_trade import send_telegram
+                    msg = (
+                        "⚠️ Sector Rotation 風險警示\n"
+                        f"日期: {latest_us.index[0].strftime('%Y-%m-%d')}\n"
+                        f"狀態: {warning}\n"
+                        f"VIX: {vix:.2f}\n"
+                        f"Macro regime: {regime:.2f}"
+                    )
+                    if send_telegram(msg):
+                        print("   📤 已傳送 Telegram 風險警示")
+                    else:
+                        print("   ⚠️ Telegram 未設定，略過通知")
+                except Exception as e:
+                    print(f"   ⚠️ Telegram 風險通知失敗: {e}")
+
     # Phase 4: 回測
     backtester = SectorRotationBacktester(
         initial_capital=args.capital,
@@ -127,6 +162,10 @@ def main():
         max_hold_days=args.hold_days,
         top_sectors=args.top_sectors,
         stocks_per_sector=args.stocks_per_sector,
+        sector_persistence_days=args.sector_persistence_days,
+        sector_persistence_min_hits=args.sector_persistence_min_hits,
+        rotation_stability_days=args.rotation_stability_days,
+        min_top_sector_overlap=args.min_top_sector_overlap,
     )
 
     print(f"\n🔄 執行板塊輪動回測...")

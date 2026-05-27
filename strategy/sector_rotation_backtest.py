@@ -39,6 +39,10 @@ class SectorRotationBacktester:
         flow_weights=None,
         gap_filter_atr=1.5,
         sector_min_flow=0.0,
+        sector_persistence_days=3,
+        sector_persistence_min_hits=2,
+        rotation_stability_days=5,
+        min_top_sector_overlap=0.5,
         buy_cost=0.001425,
         sell_cost=0.004425,
         slippage=0.001,
@@ -55,6 +59,10 @@ class SectorRotationBacktester:
         self.flow_weights = flow_weights or [0.25, 0.50, 0.25]
         self.gap_filter_atr = gap_filter_atr
         self.sector_min_flow = sector_min_flow
+        self.sector_persistence_days = sector_persistence_days
+        self.sector_persistence_min_hits = sector_persistence_min_hits
+        self.rotation_stability_days = rotation_stability_days
+        self.min_top_sector_overlap = min_top_sector_overlap
         self.buy_cost = buy_cost
         self.sell_cost = sell_cost
         self.slippage = slippage
@@ -136,7 +144,44 @@ class SectorRotationBacktester:
         # 統計
         regime_stats = {'full': 0, 'reduced': 0, 'minimal': 0, 'stopped': 0}
         tech_gate_stats = {'open': 0, 'half': 0, 'closed': 0}
+        guardrail_stats = {
+            'sector_persistence_skip': 0,
+            'rotation_unstable_skip': 0,
+        }
         sector_entry_counts = {}
+
+        def top_sectors_at(flow_idx):
+            """Return top sectors at a historical sector-flow row."""
+            if flow_idx < 0 or flow_idx >= len(sector_flow_df):
+                return []
+            flows = sector_flow_df.iloc[flow_idx].dropna()
+            if flows.empty:
+                return []
+            return flows.sort_values(ascending=False).head(self.top_sectors).index.tolist()
+
+        def sector_hit_count(sector_name, signal_idx):
+            """Count how often a sector appeared in Top-N over the recent window."""
+            start = max(0, signal_idx - self.sector_persistence_days + 1)
+            hits = 0
+            for idx in range(start, signal_idx + 1):
+                if sector_name in top_sectors_at(idx):
+                    hits += 1
+            return hits
+
+        def rotation_overlap(signal_idx):
+            """Average consecutive Top-N overlap ratio over recent days."""
+            if self.rotation_stability_days <= 1:
+                return 1.0
+            start = max(0, signal_idx - self.rotation_stability_days + 1)
+            sets = [set(top_sectors_at(idx)) for idx in range(start, signal_idx + 1)]
+            sets = [s for s in sets if s]
+            if len(sets) < 2:
+                return 1.0
+            overlaps = []
+            for prev, curr in zip(sets, sets[1:]):
+                denom = max(1, min(len(prev), len(curr), self.top_sectors))
+                overlaps.append(len(prev & curr) / denom)
+            return float(np.mean(overlaps)) if overlaps else 1.0
 
         for i in range(60, len(dates)):
             date = dates[i]
@@ -305,12 +350,26 @@ class SectorRotationBacktester:
             # 排名取前 N 板塊
             ranked_sectors = valid_flows.sort_values(ascending=False)
 
+            # 主線太亂時不開新倉：Top-N 板塊連續重疊率過低代表快速輪動。
+            stability = rotation_overlap(i - 1)
+            if stability < self.min_top_sector_overlap:
+                guardrail_stats['rotation_unstable_skip'] += 1
+                continue
+
             selected_sectors = []
             tech_sectors = {'semiconductor', 'electronics', 'computing'}
 
             for sector_name, flow_score in ranked_sectors.items():
                 if len(selected_sectors) >= self.top_sectors:
                     break
+
+                # 不追剛衝上來的板塊：近 N 天至少 M 天在 Top-N。
+                if (
+                    self.sector_persistence_days > 1
+                    and sector_hit_count(sector_name, i - 1) < self.sector_persistence_min_hits
+                ):
+                    guardrail_stats['sector_persistence_skip'] += 1
+                    continue
 
                 # Tech gate 檢查
                 if sector_name in tech_sectors:
@@ -497,6 +556,10 @@ class SectorRotationBacktester:
         for k, v in tech_gate_stats.items():
             pct = v / total_days * 100 if total_days > 0 else 0
             print(f"      {k}: {v} 天 ({pct:.0f}%)")
+
+        print(f"   🛡️ 防護觸發:")
+        print(f"      板塊持續性不足跳過: {guardrail_stats['sector_persistence_skip']} 次")
+        print(f"      主線輪動過快跳過: {guardrail_stats['rotation_unstable_skip']} 天")
 
         if sector_entry_counts:
             print(f"   📈 板塊進場次數:")

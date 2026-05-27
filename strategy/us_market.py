@@ -39,8 +39,8 @@ def fetch_us_signals(start_date=None, end_date=None, days=1500):
     pd.DataFrame
         包含所有美股信號的 DataFrame，index = trading date
         欄位: spy_close, spy_ma20, spy_ma60, spy_trend, spy_short,
-              vix_close, sox_close, sox_ma20, sox_ma60, sox_trend,
-              sox_mom_20d, macro_regime, tech_gate
+              vix_close, vix_rising_3d, sox_close, sox_ma20, sox_ma60,
+              sox_trend, sox_mom_20d, macro_regime, macro_warning, tech_gate
     """
     if end_date:
         end_dt = pd.Timestamp(end_date)
@@ -83,7 +83,8 @@ def fetch_us_signals(start_date=None, end_date=None, days=1500):
         signals['spy_short'] = (signals['spy_close'] > signals['spy_ma20']).astype(int)
 
     if 'vix_close' in signals.columns:
-        pass  # VIX 直接用 close 值
+        vix_up = signals['vix_close'].diff() > 0
+        signals['vix_rising_3d'] = vix_up.rolling(3).sum().fillna(0) >= 3
 
     if 'sox_close' in signals.columns:
         signals['sox_ma20'] = signals['sox_close'].rolling(20).mean()
@@ -93,6 +94,7 @@ def fetch_us_signals(start_date=None, end_date=None, days=1500):
 
     # 計算 Macro Regime
     signals['macro_regime'] = _compute_macro_regime_series(signals)
+    signals['macro_warning'] = _compute_macro_warning_series(signals)
 
     # 計算 Tech Gate
     signals['tech_gate'] = _compute_tech_gate_series(signals)
@@ -120,6 +122,7 @@ def _compute_macro_regime_series(signals):
     - 復甦允許：VIX 25-28 + SPY > MA20 → 半倉
 
     VIX > 28                            → 0.0 (完全停止)
+    VIX 連續上升 3 天                  → cap 0.5 / 0.3 (風險升溫先降倉)
     SPY↓(MA60) + SOX↓(MA60)            → 0.1 (雙空 = 最危險)
     SPY↓ + VIX 25~28 + SPY > MA20      → 0.5 (復甦允許)
     SPY↓ + VIX 25~28                    → 0.2
@@ -133,6 +136,10 @@ def _compute_macro_regime_series(signals):
     spy_short = signals.get('spy_short', pd.Series(1, index=signals.index))
     sox_trend = signals.get('sox_trend', pd.Series(1, index=signals.index))
     vix = signals.get('vix_close', pd.Series(20.0, index=signals.index))
+    vix_rising_3d = signals.get(
+        'vix_rising_3d',
+        pd.Series(False, index=signals.index),
+    ).astype(bool)
 
     # ── Layer 1: VIX 硬停止 (降到 28) ──
     regime[vix > 28] = 0.0
@@ -163,7 +170,32 @@ def _compute_macro_regime_series(signals):
     mask_up_low_vix = (spy_trend == 1) & (vix < 22)
     regime[mask_up_low_vix] = 1.0
 
+    # ── Layer 5: VIX 升溫提早降倉 ──
+    # 風險常在 VIX 尚未超過硬停止門檻前發生；用 cap 避免覆蓋硬停止與雙空。
+    rising_low = vix_rising_3d & (vix >= 22) & (vix < 25) & (regime > 0)
+    rising_mid = vix_rising_3d & (vix >= 25) & (vix <= 28) & (regime > 0)
+    regime[rising_low] = np.minimum(regime[rising_low], 0.5)
+    regime[rising_mid] = np.minimum(regime[rising_mid], 0.3)
+
     return regime
+
+
+def _compute_macro_warning_series(signals):
+    """Label days where macro risk is warming before a hard stop."""
+    warning = pd.Series('', index=signals.index, dtype='object')
+    vix = signals.get('vix_close', pd.Series(20.0, index=signals.index))
+    vix_rising_3d = signals.get(
+        'vix_rising_3d',
+        pd.Series(False, index=signals.index),
+    ).astype(bool)
+    spy_trend = signals.get('spy_trend', pd.Series(1, index=signals.index))
+    sox_trend = signals.get('sox_trend', pd.Series(1, index=signals.index))
+
+    warning[vix > 28] = 'vix_hard_stop'
+    warning[(spy_trend == 0) & (sox_trend == 0) & (vix <= 28)] = 'spy_sox_dual_bear'
+    warning[vix_rising_3d & (vix >= 25) & (vix <= 28)] = 'vix_rising_mid'
+    warning[vix_rising_3d & (vix >= 22) & (vix < 25)] = 'vix_rising_low'
+    return warning
 
 
 def _compute_tech_gate_series(signals):
