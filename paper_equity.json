@@ -9,7 +9,7 @@
       "sl": 3420.0,
       "entry_date": "2026-05-25",
       "shares": 3.0,
-      "day_count": 13
+      "day_count": 14
     }
   },
   "closed_trades": [
@@ -446,6 +446,13 @@
       "capital": 224323.0,
       "n_positions": 1,
       "n_closed_today": 0
+    },
+    {
+      "date": "2026-06-12",
+      "equity": 236863.0,
+      "capital": 224323.0,
+      "n_positions": 1,
+      "n_closed_today": 0
     }
   ],
   "daily_signals": [
@@ -879,6 +886,18 @@
         "2882",
         "2353",
         "2883"
+      ]
+    },
+    {
+      "date": "2026-06-12",
+      "tickers": [
+        "2327",
+        "6239",
+        "3481",
+        "2344",
+        "2404",
+        "2454",
+        "2353"
       ]
     }
   ]
