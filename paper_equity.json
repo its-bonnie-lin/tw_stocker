@@ -1,8 +1,72 @@
 {
   "start_date": "2026-04-22",
   "initial_capital": 200000,
-  "capital": 194459.62565911032,
-  "positions": {},
+  "capital": 20028.55433154422,
+  "positions": {
+    "1303": {
+      "entry": 301.0,
+      "tp": 383.1,
+      "sl": 239.425,
+      "entry_date": "2026-10-23",
+      "shares": 82,
+      "day_count": 0,
+      "max_hold_days": 20
+    },
+    "6505": {
+      "entry": 106.5,
+      "tp": 137.42,
+      "sl": 83.31,
+      "entry_date": "2026-10-23",
+      "shares": 233,
+      "day_count": 0,
+      "max_hold_days": 20
+    },
+    "1101": {
+      "entry": 27.149999618530273,
+      "tp": 31.16,
+      "sl": 25.5425,
+      "entry_date": "2026-10-23",
+      "shares": 917,
+      "day_count": 0,
+      "max_hold_days": 20
+    },
+    "4938": {
+      "entry": 103.5,
+      "tp": 117.74,
+      "sl": 92.82,
+      "entry_date": "2026-10-23",
+      "shares": 240,
+      "day_count": 0,
+      "max_hold_days": 20
+    },
+    "1301": {
+      "entry": 73.8,
+      "tp": 90.76,
+      "sl": 61.08,
+      "entry_date": "2026-10-23",
+      "shares": 337,
+      "day_count": 0,
+      "max_hold_days": 20
+    },
+    "2412": {
+      "entry": 153.0,
+      "tp": 167.9,
+      "sl": 150.575,
+      "entry_date": "2026-10-23",
+      "shares": 163,
+      "day_count": 0,
+      "max_hold_days": 20
+    },
+    "2884": {
+      "entry": 49.04999923706055,
+      "tp": 53.86,
+      "sl": 46.6675,
+      "entry_date": "2026-10-23",
+      "shares": 509,
+      "day_count": 0,
+      "max_hold_days": 20
+    }
+  },
   "closed_trades": [
     {
       "ticker": "3037",
@@ -1197,6 +1261,13 @@
       "equity": 194460.0,
       "capital": 194460.0,
       "n_positions": 0,
+      "n_closed_today": 0
+    },
+    {
+      "date": "2026-10-23",
+      "equity": 195943.0,
+      "capital": 20029.0,
+      "n_positions": 7,
       "n_closed_today": 0
     }
   ],
@@ -2763,6 +2834,18 @@
     },
     {
       "date": "2026-10-22",
+      "tickers": [
+        "1303",
+        "6505",
+        "1101",
+        "4938",
+        "1301",
+        "2412",
+        "2884"
+      ]
+    },
+    {
+      "date": "2026-10-23",
       "tickers": [
         "1303",
         "6505",
