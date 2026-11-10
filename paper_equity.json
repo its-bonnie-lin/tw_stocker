@@ -9,7 +9,7 @@
       "sl": 25.5425,
       "entry_date": "2026-10-23",
       "shares": 917,
-      "day_count": 11,
+      "day_count": 12,
       "max_hold_days": 20
     },
     "2412": {
@@ -18,7 +18,7 @@
       "sl": 150.575,
       "entry_date": "2026-10-23",
       "shares": 163,
-      "day_count": 11,
+      "day_count": 12,
       "max_hold_days": 20
     }
   },
@@ -1361,6 +1361,13 @@
       "capital": 121063.0,
       "n_positions": 2,
       "n_closed_today": 4
+    },
+    {
+      "date": "2026-11-10",
+      "equity": 171556.0,
+      "capital": 121063.0,
+      "n_positions": 2,
+      "n_closed_today": 0
     }
   ],
   "daily_signals": [
@@ -3076,6 +3083,18 @@
         "2886",
         "3045",
         "2603",
+        "2884",
+        "1101"
+      ]
+    },
+    {
+      "date": "2026-11-10",
+      "tickers": [
+        "6446",
+        "2891",
+        "2412",
+        "3045",
+        "2886",
         "2884",
         "1101"
       ]
